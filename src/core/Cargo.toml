@@ -1,0 +1,17 @@
+[package]
+name = "zynx"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+android_logger = { workspace = true }
+anyhow = { workspace = true }
+aya = { workspace = true }
+aya-log = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+rustix = { workspace = true }
+tokio = { workspace = true }
+
+[build-dependencies]
+aya-build = { workspace = true }

@@ -1,0 +1,15 @@
+[package]
+name = "zynx-ebpf"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "zynx-ebpf"
+path = "src/main.rs"
+
+[dependencies]
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
