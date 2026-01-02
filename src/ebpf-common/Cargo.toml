@@ -1,0 +1,4 @@
+[package]
+name = "zynx-ebpf-common"
+version.workspace = true
+edition.workspace = true

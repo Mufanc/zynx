@@ -12,6 +12,7 @@ env_logger = { workspace = true }
 log = { workspace = true }
 rustix = { workspace = true }
 tokio = { workspace = true }
+zynx-ebpf-common = { path = "../ebpf-common" }
 
 [build-dependencies]
 aya-build = { workspace = true }

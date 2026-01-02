@@ -904,6 +904,7 @@ dependencies = [
  "rustix",
  "tokio",
  "zynx-ebpf",
+ "zynx-ebpf-common",
 ]
 
 [[package]]
@@ -913,4 +914,9 @@ dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
  "which",
+ "zynx-ebpf-common",
 ]
+
+[[package]]
+name = "zynx-ebpf-common"
+version = "1.0.0"
