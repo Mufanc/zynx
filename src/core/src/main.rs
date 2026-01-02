@@ -1,14 +1,14 @@
 use android_logger::Config;
 use anyhow::Result;
 use aya::programs::TracePoint;
-use aya::{Ebpf, include_bytes_aligned};
+use aya::{include_bytes_aligned, Ebpf};
 use aya_log::EbpfLogger;
-use log::{LevelFilter, warn};
+use log::{info, warn, LevelFilter};
 use rustix::process;
 use rustix::process::{Resource, Rlimit};
 use std::env;
-use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
+use tokio::io::Interest;
 use tokio::{signal, task};
 
 fn init_logger() {
@@ -61,13 +61,23 @@ async fn main() -> Result<()> {
         }
     }
 
-    let program: &mut TracePoint = ebpf
-        .program_mut("tracepoint_task_task_newtask")
-        .unwrap()
-        .try_into()?;
+    for (name, program) in ebpf.programs_mut() {
+        let parts: Vec<_> = name.split("__").collect();
 
-    program.load()?;
-    program.attach("task", "task_newtask")?;
+        #[allow(clippy::single_match)]
+        match parts[0] {
+            "tracepoint" => {
+                let program: &mut TracePoint = program.try_into()?;
+                let (category, name) = (parts[1], parts[2]);
+
+                program.load()?;
+                program.attach(category, name)?;
+
+                info!("attach tracepoint: {category}/{name}");
+            }
+            _ => ()
+        }
+    }
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl+C...");

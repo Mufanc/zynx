@@ -3,6 +3,12 @@ use std::env;
 use std::error::Error;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    if env::var("PROFILE")? == "debug" {
+        unsafe {
+            env::set_var("DEBUG_EBPF", "1");
+        }
+    }
+
     let project_root = env::var("ROOT_DIR")?;
     let ebpf_package = Package {
         name: "zynx-ebpf",
