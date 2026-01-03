@@ -1,4 +1,3 @@
-use std::ffi::CStr;
 use anyhow::{Context, Result};
 use aya::maps::{HashMap, Map, MapData, RingBuf};
 use aya::programs::TracePoint;
@@ -7,14 +6,16 @@ use aya_log::EbpfLogger;
 use log::{error, info, warn};
 use rustix::process;
 use rustix::process::{Pid, Resource, Rlimit};
+use std::ffi::CStr;
 use std::mem;
-use std::sync::Mutex;
+use std::sync::{Arc, OnceLock};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
+use tokio::sync::Mutex;
 use tokio::task;
 use zynx_ebpf_common::Message as EbpfMessage;
 
-static SETRLIMIT_ONCE: Mutex<bool> = Mutex::new(false);
+static INSTANCE: OnceLock<&'static Monitor> = OnceLock::new();
 
 pub struct Config {
     pub target_paths: Vec<String>,
@@ -22,7 +23,7 @@ pub struct Config {
 }
 
 pub struct Monitor {
-    channel: AsyncFd<RingBuf<MapData>>,
+    channel: Arc<Mutex<AsyncFd<RingBuf<MapData>>>>,
     _ebpf: Ebpf,
 }
 
@@ -60,25 +61,14 @@ where
 }
 
 impl Monitor {
-    fn bump_rlimit_once() -> Result<()> {
-        let mut guard = SETRLIMIT_ONCE.lock().expect("mutex poisoned");
-
-        if !*guard {
-            process::setrlimit(
-                Resource::Memlock,
-                Rlimit {
-                    current: None,
-                    maximum: None,
-                },
-            )?;
-            *guard = true;
-        }
-
-        Ok(())
-    }
-
-    pub async fn new(config: Config) -> Result<Self> {
-        Self::bump_rlimit_once()?;
+    async fn new(config: Config) -> Result<Self> {
+        process::setrlimit(
+            Resource::Memlock,
+            Rlimit {
+                current: None,
+                maximum: None,
+            },
+        )?;
 
         let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
@@ -91,9 +81,9 @@ impl Monitor {
 
                 task::spawn(async move {
                     loop {
-                        let mut guard = logger.readable_mut().await.unwrap();
-                        guard.get_inner_mut().flush();
-                        guard.clear_ready();
+                        let mut asyncfd = logger.readable_mut().await.unwrap();
+                        asyncfd.get_inner_mut().flush();
+                        asyncfd.clear_ready();
                     }
                 });
             }
@@ -145,19 +135,20 @@ impl Monitor {
             AsyncFd::with_interest(take_map(&mut ebpf, "MESSAGE_CHANNEL")?, Interest::READABLE)?;
 
         Ok(Self {
-            channel,
+            channel: Arc::new(Mutex::new(channel)),
             _ebpf: ebpf,
         })
     }
 
-    pub async fn next(&mut self) -> Option<Message> {
+    pub async fn recv_msg(&self) -> Option<Message> {
         loop {
-            let mut guard = self.channel.readable_mut().await.ok()?;
-            let entry = guard.get_inner_mut().next();
+            let mut channel = self.channel.lock().await;
+            let mut asyncfd = channel.readable_mut().await.ok()?;
+            let entry = asyncfd.get_inner_mut().next();
 
             if entry.is_none() {
                 drop(entry);
-                guard.clear_ready();
+                asyncfd.clear_ready();
                 continue;
             }
 
@@ -170,4 +161,14 @@ impl Monitor {
             break Some(message.into());
         }
     }
+}
+
+pub async fn init_once(config: Config) -> Result<()> {
+    let instance: &'static _ = Box::leak(Box::new(Monitor::new(config).await?));
+    INSTANCE.get_or_init(|| instance);
+    Ok(())
+}
+
+pub fn instance() -> &'static Monitor {
+    INSTANCE.get().expect("monitor is not running")
 }

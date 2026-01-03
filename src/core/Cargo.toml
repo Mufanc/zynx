@@ -10,6 +10,8 @@ aya = { workspace = true }
 aya-log = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
+nix = { workspace = true }
+procfs = { workspace = true }
 rustix = { workspace = true }
 tokio = { workspace = true }
 zynx-ebpf-common = { path = "../ebpf-common" }

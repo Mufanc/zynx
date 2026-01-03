@@ -44,8 +44,6 @@ impl From<ProcessState> for u8 {
     }
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
 trait TracePointEvent {
     fn from_context(ctx: &TracePointContext) -> &Self;
 }
@@ -95,10 +93,9 @@ fn hashmap_contains<K, V>(map: &HashMap<K, V>, key: &K) -> bool {
 
 #[inline(always)]
 fn stop_current_proc() {
-    // Todo:
-    // unsafe {
-    //     helpers::bpf_send_signal_thread(19 /* SIGSTOP */);
-    // }
+    unsafe {
+        helpers::bpf_send_signal_thread(19 /* SIGSTOP */);
+    }
 }
 
 #[inline(always)]
@@ -155,10 +152,7 @@ pub fn tracepoint__task__task_newtask(ctx: TracePointContext) -> u32 {
                 &ProcessState::PostFork.into(),
             ) && DEBUG
             {
-                warn!(
-                    &ctx,
-                    "failed to record init child: {}", child_pid
-                )
+                warn!(&ctx, "failed to record init child: {}", child_pid)
             }
         }
     }
