@@ -16,7 +16,7 @@ run-emulator: build-debug
     adb push target/aarch64-linux-android/debug/zynx /data/local/tmp
     adb shell "chmod +x /data/local/tmp/zynx"
     adb shell "(su 0 killall zynx || true) && sleep 1"
-    adb shell "RUST_LOG=debug su 0 /data/local/tmp/zynx"
+    adb shell "RUST_LOG=debug RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx"
 
 clean:
     cargo clean

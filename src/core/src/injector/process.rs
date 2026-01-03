@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use log::{debug, trace};
 use nix::errno::Errno;
 use nix::libc;
@@ -6,12 +6,12 @@ use nix::libc::c_int;
 use nix::sys::wait;
 use nix::sys::wait::{WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
+use procfs::ProcError;
 use procfs::process::{ProcState, Process};
 use rustix::process::Pid as RustixPid;
 use std::ffi::c_long;
 use std::thread;
 use std::time::Duration;
-use procfs::ProcError;
 
 #[derive(Debug)]
 pub struct Tracee {
@@ -51,8 +51,8 @@ pub fn spin_wait(pid: RustixPid) -> Result<()> {
 
         match proc.stat().and_then(|stat| stat.state()) {
             Ok(ProcState::Stopped) => break,
-            Ok(_) => {},
-            Err(ProcError::NotFound(_)) => {},
+            Ok(_) => {}
+            Err(ProcError::NotFound(_)) => {}
             Err(err) => bail!(err),
         }
 

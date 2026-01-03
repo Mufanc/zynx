@@ -4,9 +4,9 @@
 #![allow(non_snake_case)]
 
 use aya_ebpf::bindings::{BPF_ANY, BPF_EXIST, BPF_NOEXIST};
-use aya_ebpf::macros::{map, tracepoint};
+use aya_ebpf::macros::{map, tracepoint, uprobe};
 use aya_ebpf::maps::{Array, HashMap, RingBuf};
-use aya_ebpf::programs::TracePointContext;
+use aya_ebpf::programs::{ProbeContext, TracePointContext};
 use aya_ebpf::{EbpfContext, helpers};
 use aya_log_ebpf::{debug, info, warn};
 use zynx_ebpf_common::Message;
@@ -110,7 +110,7 @@ fn current_is_32bit() -> bool {
 
         if let Ok(thread_info) = helpers::bpf_probe_read_kernel(&(*task).thread_info) {
             let flags = thread_info.flags;
-            is32bit = (flags >> 22 /* TIF_32BIT */) & 1 != 0
+            is32bit = (flags >> 22/* TIF_32BIT */) & 1 != 0
         }
     }
 
@@ -333,7 +333,7 @@ pub fn tracepoint__task__task_rename(ctx: TracePointContext) -> u32 {
 
                 hashmap_remove(&mut INIT_CHILDREN, &pid);
             }
-            _ => {},
+            _ => {}
         }
     }
 
@@ -452,7 +452,25 @@ pub fn tracepoint__signal__signal_deliver(ctx: TracePointContext) -> u32 {
 
     let current_pid = current_pid();
 
-    debug!(&ctx, "signal deliver to process {}: sig={}, code={}", current_pid, event.sig, event.code);
+    debug!(
+        &ctx,
+        "signal deliver to process {}: sig={}, code={}", current_pid, event.sig, event.code
+    );
+
+    0
+}
+
+#[uprobe]
+pub fn uprobe__specialize_common(ctx: ProbeContext) -> u32 {
+    let current_pid = current_pid();
+
+    let uid: i64 = ctx.arg(1).unwrap_or(-1);
+    let gid: i64 = ctx.arg(2).unwrap_or(-1);
+
+    debug!(
+        &ctx,
+        "specialize_common: pid={} uid={} gid={}", current_pid, uid, gid
+    );
 
     0
 }

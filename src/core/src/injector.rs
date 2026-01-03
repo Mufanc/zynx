@@ -12,6 +12,7 @@ fn handle_event(event: &Message) -> Result<()> {
     match event {
         Message::PathMatches(pid, path) => {
             // Todo:
+            Ok(())
         }
         Message::NameMatches(pid, name) => {
             if name == ZYGOTE_NAME {
@@ -25,13 +26,14 @@ fn handle_event(event: &Message) -> Result<()> {
 
                 info!("found `{ZYGOTE_NAME}` without system server argument: {pid} -> {args:?}")
             }
+
+            // Todo:
+            Ok(())
         }
         Message::ZygoteFork(pid) => {
-            zygote::handle_embryo(*pid)?;
+            zygote::handle_embryo(*pid)
         }
     }
-
-    Ok(())
 }
 
 pub async fn serve() -> Result<()> {
@@ -46,7 +48,7 @@ pub async fn serve() -> Result<()> {
 
     while let Some(event) = monitor.recv_msg().await {
         if let Err(err) = handle_event(&event) {
-            error!("error while handling event {event:?}: {err:?}")
+            error!("error while handling event {event:?}: {err:?}");
         }
     }
 

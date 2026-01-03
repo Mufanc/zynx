@@ -8,10 +8,16 @@ android_logger = { workspace = true }
 anyhow = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
+cpp_demangle = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
+lzma-rs = { workspace = true }
 nix = { workspace = true }
+object = { workspace = true }
+once_cell = { workspace = true }
+once_map = { workspace = true }
 procfs = { workspace = true }
+regex-lite = { workspace = true }
 rustix = { workspace = true }
 tokio = { workspace = true }
 zynx-ebpf-common = { path = "../ebpf-common" }

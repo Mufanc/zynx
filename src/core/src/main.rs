@@ -1,3 +1,4 @@
+mod binary;
 mod injector;
 mod misc;
 mod monitor;
