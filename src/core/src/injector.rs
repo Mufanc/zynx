@@ -5,6 +5,7 @@ use log::{error, info};
 use procfs::process::Process;
 use zygote::ZYGOTE_NAME;
 
+mod process;
 mod zygote;
 
 fn handle_event(event: &Message) -> Result<()> {
@@ -14,13 +15,19 @@ fn handle_event(event: &Message) -> Result<()> {
         }
         Message::NameMatches(pid, name) => {
             if name == ZYGOTE_NAME {
-                match Process::new(pid.as_raw_pid())?.cmdline() {
-                    Ok(args) if args.contains(&"--start-system-server".into()) => {
-                        return zygote::handle_zygote(*pid);
-                    }
-                    _ => info!("found `{ZYGOTE_NAME}` without system server flag: {pid}"),
+                process::spin_wait(*pid)?;
+
+                let args = Process::new(pid.as_raw_pid())?.cmdline()?;
+
+                if args.contains(&"--start-system-server".into()) {
+                    return zygote::handle_zygote(*pid);
                 }
+
+                info!("found `{ZYGOTE_NAME}` without system server argument: {pid} -> {args:?}")
             }
+        }
+        Message::ZygoteFork(pid) => {
+            zygote::handle_embryo(*pid)?;
         }
     }
 

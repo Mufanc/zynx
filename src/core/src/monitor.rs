@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use aya::maps::{HashMap, Map, MapData, RingBuf};
+use aya::maps::{Array, HashMap, Map, MapData, RingBuf};
 use aya::programs::TracePoint;
 use aya::{Ebpf, include_bytes_aligned};
 use aya_log::EbpfLogger;
@@ -8,10 +8,10 @@ use rustix::process;
 use rustix::process::{Pid, Resource, Rlimit};
 use std::ffi::CStr;
 use std::mem;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task;
 use zynx_ebpf_common::Message as EbpfMessage;
 
@@ -23,7 +23,8 @@ pub struct Config {
 }
 
 pub struct Monitor {
-    channel: Arc<Mutex<AsyncFd<RingBuf<MapData>>>>,
+    channel: Arc<AsyncMutex<AsyncFd<RingBuf<MapData>>>>,
+    zygote_info: Arc<Mutex<Array<MapData, i32>>>,
     _ebpf: Ebpf,
 }
 
@@ -31,6 +32,7 @@ pub struct Monitor {
 pub enum Message {
     PathMatches(Pid, String),
     NameMatches(Pid, String),
+    ZygoteFork(Pid),
 }
 
 fn parse_string(data: &[u8]) -> String {
@@ -47,6 +49,7 @@ impl From<EbpfMessage> for Message {
             EbpfMessage::NameMatches(pid, name) => {
                 Message::NameMatches(Pid::from_raw(pid).unwrap(), parse_string(&name))
             }
+            EbpfMessage::ZygoteFork(pid) => Message::ZygoteFork(Pid::from_raw(pid).unwrap()),
         }
     }
 }
@@ -122,20 +125,22 @@ impl Monitor {
                     let program: &mut TracePoint = program.try_into()?;
                     let (category, name) = (parts[1], parts[2]);
 
+                    info!("attach tracepoint: {category}/{name}");
+
                     program.load()?;
                     program.attach(category, name)?;
-
-                    info!("attach tracepoint: {category}/{name}");
                 }
-                _ => (),
+                _ => panic!("unknown program type: {}", parts[0]),
             }
         }
 
         let channel =
             AsyncFd::with_interest(take_map(&mut ebpf, "MESSAGE_CHANNEL")?, Interest::READABLE)?;
+        let zygote_info = take_map(&mut ebpf, "ZYGOTE_INFO")?;
 
         Ok(Self {
-            channel: Arc::new(Mutex::new(channel)),
+            channel: Arc::new(AsyncMutex::new(channel)),
+            zygote_info: Arc::new(Mutex::new(zygote_info)),
             _ebpf: ebpf,
         })
     }
@@ -160,6 +165,12 @@ impl Monitor {
 
             break Some(message.into());
         }
+    }
+
+    pub fn attach_zygote(&self, pid: i32) -> Result<()> {
+        let mut zygote_info = self.zygote_info.lock().expect("mutex poisoned");
+        zygote_info.set(0, pid, 0 /* BPF_ANY */)?;
+        Ok(())
     }
 }
 
