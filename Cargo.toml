@@ -17,6 +17,7 @@ aya-ebpf = { git = "https://github.com/Mufanc/aya" }
 aya-log = { git = "https://github.com/Mufanc/aya" }
 aya-log-ebpf = { git = "https://github.com/Mufanc/aya" }
 cpp_demangle = "0.5"
+dynasmrt = "4.0"
 env_logger = "0.11"
 log = "0.4"
 lzma-rs = "0.3"

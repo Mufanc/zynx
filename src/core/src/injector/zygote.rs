@@ -1,12 +1,18 @@
 use crate::binary::cpp;
 use crate::binary::symbol::{Section, Symbol, SymbolResolver};
 use crate::monitor;
-use anyhow::Result;
+use anyhow::{Context, Result};
+use dynasmrt::dynasm;
 use log::{info, warn};
 use once_cell::sync::Lazy;
+use procfs::process::{MMapPath, Process};
 use regex_lite::Regex;
-use rustix::process;
+use rustix::fs::{Mode, OFlags};
+use rustix::path::Arg;
 use rustix::process::{Pid, Signal};
+use rustix::{fs, process};
+use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 
 pub const ZYGOTE_NAME: &str = "zygote64";
 
@@ -41,6 +47,19 @@ impl SpecializeCommonConfig {
 static SC_CONFIG: Lazy<SpecializeCommonConfig> =
     Lazy::new(|| SpecializeCommonConfig::resolve().expect("failed to resolve SpecializeCommon"));
 
+static SC_SHELLCODE: Lazy<Vec<u8>> = Lazy::new(|| {
+    let mut ops = dynasmrt::aarch64::Assembler::new().expect("failed to create assembler");
+
+    dynasm!(ops
+        ; .arch aarch64
+        ; brk 0x0
+    );
+
+    ops.finalize()
+        .expect("failed to finalize shellcode")
+        .to_vec()
+});
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub fn handle_zygote(pid: Pid) -> Result<()> {
@@ -52,18 +71,65 @@ pub fn handle_zygote(pid: Pid) -> Result<()> {
     Ok(())
 }
 
+struct ResumeGuard(Pid);
+
+impl Drop for ResumeGuard {
+    fn drop(&mut self) {
+        let _ = process::kill_process(self.0, Signal::CONT);
+    }
+}
+
 pub fn handle_embryo(pid: Pid) -> Result<()> {
     info!("found embryo process: {pid}");
 
-    let addr =
-        SC_CONFIG.sym.addr - SC_CONFIG.sec.addr + SC_CONFIG.sec.file_offset.expect("no offset");
-    let target = SC_CONFIG.lib;
+    let guard = ResumeGuard(pid);
 
-    if let Err(err) = monitor::instance().attach_embryo(pid.as_raw_pid(), addr, target) {
-        warn!("failed to attach embryo: {err:?}")
-    }
+    // uprobe:
+    // let addr =
+    //     SC_CONFIG.sym.addr - SC_CONFIG.sec.addr + SC_CONFIG.sec.file_offset.expect("no offset");
+    // let target = SC_CONFIG.lib;
+    //
+    // if let Err(err) = monitor::instance().attach_embryo(pid.as_raw_pid(), addr, target) {
+    //     warn!("failed to attach embryo: {err:?}")
+    // }
 
-    process::kill_process(pid, Signal::CONT)?;
+    // shellcode:
+    let mut ops = dynasmrt::aarch64::Assembler::new()?;
+
+    dynasm!(ops
+        ; .arch aarch64
+        ; brk 0x0
+    );
+
+    let base = Process::new(pid.as_raw_pid())?
+        .maps()?
+        .into_iter()
+        .find_map(|map| {
+            if let MMapPath::Path(path) = map.pathname
+                && path.to_string_lossy() == SC_CONFIG.lib
+            {
+                Some(map.address.0)
+            } else {
+                None
+            }
+        })
+        .context("failed to find libandroid_runtime.so base address")? as usize;
+    let addr = base + SC_CONFIG.sym.addr;
+
+    warn!("addr: {addr}");
+
+    // let file = fs::open(format!("/proc/{}/mem", pid.as_raw_pid()), OFlags::WRONLY, Mode::empty())?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .open(format!("/proc/{pid}/mem"))?;
+
+    file.seek(SeekFrom::Start(addr as _))?;
+    file.write_all(&SC_SHELLCODE)?;
+    file.flush()?;
+
+    drop(file);
+
+    // process::kill_process(pid, Signal::CONT)?;
 
     Ok(())
 }

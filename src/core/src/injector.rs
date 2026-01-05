@@ -30,9 +30,7 @@ fn handle_event(event: &Message) -> Result<()> {
             // Todo:
             Ok(())
         }
-        Message::ZygoteFork(pid) => {
-            zygote::handle_embryo(*pid)
-        }
+        Message::ZygoteFork(pid) => zygote::handle_embryo(*pid),
     }
 }
 
