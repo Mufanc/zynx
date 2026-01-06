@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use aya::maps::{Array, HashMap, Map, MapData, RingBuf};
-use aya::programs::{TracePoint, UProbe};
+use aya::programs::TracePoint;
 use aya::{Ebpf, include_bytes_aligned};
 use aya_log::EbpfLogger;
 use log::{error, info, warn};
+use nix::unistd::Pid;
 use rustix::process;
-use rustix::process::{Pid, Resource, Rlimit};
+use rustix::process::{Resource, Rlimit};
 use std::ffi::CStr;
 use std::mem;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
@@ -26,8 +26,7 @@ pub struct Config {
 pub struct Monitor {
     channel: Arc<AsyncMutex<AsyncFd<RingBuf<MapData>>>>,
     zygote_info: Arc<Mutex<Array<MapData, i32>>>,
-    uprobe_loaded: AtomicBool,
-    ebpf: Arc<Mutex<Ebpf>>,
+    _ebpf: Ebpf,
 }
 
 #[derive(Debug)]
@@ -35,6 +34,8 @@ pub enum Message {
     PathMatches(Pid, String),
     NameMatches(Pid, String),
     ZygoteFork(Pid),
+    ZygoteCrashed(Pid),
+    EmbryoSpecialize(Pid),
 }
 
 fn parse_string(data: &[u8]) -> String {
@@ -46,12 +47,14 @@ impl From<EbpfMessage> for Message {
     fn from(value: EbpfMessage) -> Self {
         match value {
             EbpfMessage::PathMatches(pid, path) => {
-                Message::PathMatches(Pid::from_raw(pid).unwrap(), parse_string(&path))
+                Message::PathMatches(Pid::from_raw(pid), parse_string(&path))
             }
             EbpfMessage::NameMatches(pid, name) => {
-                Message::NameMatches(Pid::from_raw(pid).unwrap(), parse_string(&name))
+                Message::NameMatches(Pid::from_raw(pid), parse_string(&name))
             }
-            EbpfMessage::ZygoteFork(pid) => Message::ZygoteFork(Pid::from_raw(pid).unwrap()),
+            EbpfMessage::ZygoteFork(pid) => Message::ZygoteFork(Pid::from_raw(pid)),
+            EbpfMessage::ZygoteCrashed(pid) => Message::ZygoteCrashed(Pid::from_raw(pid)),
+            EbpfMessage::EmbryoSpecialize(pid) => Message::EmbryoSpecialize(Pid::from_raw(pid)),
         }
     }
 }
@@ -125,7 +128,7 @@ impl Monitor {
                 let program: &mut TracePoint = program.try_into()?;
                 let (category, name) = (parts[1], parts[2]);
 
-                info!("attach tracepoint: {category}/{name}");
+                info!("attaching tracepoint: {category}/{name}");
 
                 program.load()?;
                 program.attach(category, name)?;
@@ -139,8 +142,7 @@ impl Monitor {
         Ok(Self {
             channel: Arc::new(AsyncMutex::new(channel)),
             zygote_info: Arc::new(Mutex::new(zygote_info)),
-            uprobe_loaded: AtomicBool::new(false),
-            ebpf: Arc::new(Mutex::new(ebpf)),
+            _ebpf: ebpf,
         })
     }
 
@@ -169,22 +171,6 @@ impl Monitor {
     pub fn attach_zygote(&self, pid: i32) -> Result<()> {
         let mut zygote_info = self.zygote_info.lock().expect("mutex poisoned");
         zygote_info.set(0, pid, 0 /* BPF_ANY */)?;
-        Ok(())
-    }
-
-    pub fn attach_embryo(&self, pid: i32, addr: usize, target: &str) -> Result<()> {
-        let mut ebpf = self.ebpf.lock().expect("mutex poisoned");
-        let uprobe: &mut UProbe = ebpf
-            .program_mut("uprobe__specialize_common")
-            .unwrap()
-            .try_into()?;
-
-        if !self.uprobe_loaded.swap(true, Ordering::AcqRel) {
-            uprobe.load()?;
-        }
-
-        uprobe.attach(addr as u64, target, Some(pid as _))?;
-
         Ok(())
     }
 }

@@ -1,3 +1,4 @@
+use crate::injector::zygote::ZygoteTracer;
 use crate::monitor;
 use crate::monitor::Message;
 use anyhow::{Result, bail};
@@ -5,7 +6,7 @@ use log::{error, info};
 use procfs::process::Process;
 use zygote::ZYGOTE_NAME;
 
-mod process;
+mod ptrace;
 mod zygote;
 
 fn handle_event(event: &Message) -> Result<()> {
@@ -16,12 +17,12 @@ fn handle_event(event: &Message) -> Result<()> {
         }
         Message::NameMatches(pid, name) => {
             if name == ZYGOTE_NAME {
-                process::spin_wait(*pid)?;
+                ptrace::spin_wait(*pid)?;
 
-                let args = Process::new(pid.as_raw_pid())?.cmdline()?;
+                let args = Process::new(pid.as_raw())?.cmdline()?;
 
                 if args.contains(&"--start-system-server".into()) {
-                    return zygote::handle_zygote(*pid);
+                    return ZygoteTracer::create(*pid);
                 }
 
                 info!("found `{ZYGOTE_NAME}` without system server argument: {pid} -> {args:?}")
@@ -30,7 +31,9 @@ fn handle_event(event: &Message) -> Result<()> {
             // Todo:
             Ok(())
         }
-        Message::ZygoteFork(pid) => zygote::handle_embryo(*pid),
+        Message::ZygoteFork(pid) => ZygoteTracer::on_fork(*pid),
+        Message::ZygoteCrashed(_pid) => ZygoteTracer::reset(),
+        Message::EmbryoSpecialize(pid) => ZygoteTracer::on_specialize(*pid),
     }
 }
 

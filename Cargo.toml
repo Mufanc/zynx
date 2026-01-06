@@ -21,7 +21,7 @@ dynasmrt = "4.0"
 env_logger = "0.11"
 log = "0.4"
 lzma-rs = "0.3"
-nix = { version = "0.30", features = ["process"] }
+nix = { version = "0.30", features = ["process", "ptrace", "signal", "fs"] }
 object = "0.38"
 once_cell = "1.21"
 once_map = "0.4"

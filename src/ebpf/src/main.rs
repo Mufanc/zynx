@@ -4,9 +4,9 @@
 #![allow(non_snake_case)]
 
 use aya_ebpf::bindings::{BPF_ANY, BPF_EXIST, BPF_NOEXIST};
-use aya_ebpf::macros::{map, tracepoint, uprobe};
+use aya_ebpf::macros::{map, tracepoint};
 use aya_ebpf::maps::{Array, HashMap, RingBuf};
-use aya_ebpf::programs::{ProbeContext, TracePointContext};
+use aya_ebpf::programs::TracePointContext;
 use aya_ebpf::{EbpfContext, helpers};
 use aya_log_ebpf::{debug, info, warn};
 use zynx_ebpf_common::Message;
@@ -17,6 +17,8 @@ const INIT_PID: i32 = 1;
 const FIRST_APP_UID: u64 = 10000;
 const SIGSTOP: u32 = 19;
 const SIGCONT: u32 = 18;
+const SIGTRAP: u32 = 5;
+const TRAP_BRKPT: i32 = 1;
 
 #[map]
 static mut TARGET_PATHS: HashMap<[u8; 128], u8> = HashMap::with_max_entries(0x100, 0);
@@ -282,6 +284,12 @@ pub fn tracepoint__sched__sched_process_exec(ctx: TracePointContext) -> u32 {
 
             hashmap_remove(&mut INIT_CHILDREN, &pid);
         }
+
+        // skip process fork-exec from zygote (e.g. idmap2)
+        if hashmap_load(&ZYGOTE_CHILDREN, &pid).is_some() {
+            hashmap_remove(&mut ZYGOTE_CHILDREN, &pid);
+            debug!(&ctx, "skip zygote child: {}", pid);
+        }
     }
 
     0
@@ -304,36 +312,35 @@ pub fn tracepoint__task__task_rename(ctx: TracePointContext) -> u32 {
     let pid = event.pid;
 
     unsafe {
-        match hashmap_load(&INIT_CHILDREN, &pid) {
-            Some(state) if *state == ServiceState::PostExec.into() => {
-                let ptr = ctx
-                    .as_ptr()
-                    .add(EVENT_PARAMS_OFFSET + core::mem::offset_of!(TaskRenameEvent, new_comm))
-                    as *const u8;
-                let mut buffer = [0u8; 16];
+        if let Some(state) = hashmap_load(&INIT_CHILDREN, &pid)
+            && *state == ServiceState::PostExec.into()
+        {
+            let ptr = ctx
+                .as_ptr()
+                .add(EVENT_PARAMS_OFFSET + core::mem::offset_of!(TaskRenameEvent, new_comm))
+                as *const u8;
+            let mut buffer = [0u8; 16];
 
-                if helpers::bpf_probe_read_kernel_str_bytes(ptr, &mut buffer).is_ok() {
-                    let name = core::str::from_utf8_unchecked(&buffer);
+            if helpers::bpf_probe_read_kernel_str_bytes(ptr, &mut buffer).is_ok() {
+                let name = core::str::from_utf8_unchecked(&buffer);
 
-                    if DEBUG {
-                        debug!(&ctx, "process rename: {} -> {}", pid, name);
-                    }
-
-                    if hashmap_contains(&TARGET_NAMES, &buffer) {
-                        info!(&ctx, "name matches: {} -> {}", pid, name);
-
-                        sigstop();
-
-                        if !emit(Message::NameMatches(pid, buffer)) {
-                            warn!(&ctx, "failed to emit name matches message");
-                            sigcont();
-                        }
-                    }
+                if DEBUG {
+                    debug!(&ctx, "process rename: {} -> {}", pid, name);
                 }
 
-                hashmap_remove(&mut INIT_CHILDREN, &pid);
+                if hashmap_contains(&TARGET_NAMES, &buffer) {
+                    info!(&ctx, "name matches: {} -> {}", pid, name);
+
+                    sigstop();
+
+                    if !emit(Message::NameMatches(pid, buffer)) {
+                        warn!(&ctx, "failed to emit name matches message");
+                        sigcont();
+                    }
+                }
             }
-            _ => {}
+
+            hashmap_remove(&mut INIT_CHILDREN, &pid);
         }
     }
 
@@ -365,25 +372,74 @@ pub fn tracepoint__raw_syscalls__sys_enter(ctx: TracePointContext) -> u32 {
         return 0;
     }
 
-    let current_pid = current_pid();
+    let pid = current_pid();
 
     unsafe {
-        if hashmap_load(&ZYGOTE_CHILDREN, &current_pid) == Some(&EmbryoState::PreFork.into()) {
-            hashmap_change(
-                &mut ZYGOTE_CHILDREN,
-                &current_pid,
-                &EmbryoState::PostFork.into(),
-            );
+        if hashmap_load(&ZYGOTE_CHILDREN, &pid) == Some(&EmbryoState::PreFork.into()) {
+            if !hashmap_change(&mut ZYGOTE_CHILDREN, &pid, &EmbryoState::PostFork.into()) {
+                warn!(&ctx, "failed to mark zygote child: {}", pid)
+            }
 
             if DEBUG {
-                debug!(&ctx, "post zygote fork: {}", current_pid)
+                debug!(&ctx, "post zygote fork: {}", pid)
             }
 
             sigstop();
 
-            if !emit(Message::ZygoteFork(current_pid)) {
+            if !emit(Message::ZygoteFork(pid)) {
                 warn!(&ctx, "failed to emit zygote fork message");
                 sigcont();
+            }
+        }
+    }
+
+    0
+}
+
+#[repr(C)]
+struct SignalDeliverEvent {
+    sig: i32,
+    _errno: i32,
+    code: i32,
+    _sa_handler: u64,
+    _sa_flags: u64,
+}
+
+#[tracepoint]
+pub fn tracepoint__signal__signal_deliver(ctx: TracePointContext) -> u32 {
+    let event = SignalDeliverEvent::from_context(&ctx);
+    let sig = event.sig as u32;
+
+    if sig != SIGSTOP && sig != SIGCONT && sig != SIGTRAP {
+        return 0;
+    }
+
+    if !current_is_privileged() {
+        return 0;
+    }
+
+    let pid = current_pid();
+
+    if DEBUG {
+        debug!(
+            &ctx,
+            "signal deliver to process {}: sig={}, code={}", pid, event.sig, event.code
+        );
+    }
+
+    if sig == SIGTRAP && event.code == TRAP_BRKPT {
+        unsafe {
+            if let Some(state) = hashmap_load(&ZYGOTE_CHILDREN, &pid)
+                && *state == EmbryoState::PostFork.into()
+            {
+                hashmap_remove(&mut ZYGOTE_CHILDREN, &pid);
+
+                sigstop();
+
+                if !emit(Message::EmbryoSpecialize(pid)) {
+                    warn!(&ctx, "failed to emit embryo specialize message");
+                    sigcont();
+                }
             }
         }
     }
@@ -415,62 +471,15 @@ pub fn tracepoint__sched__sched_process_exit(ctx: TracePointContext) -> u32 {
         if ZYGOTE_INFO.get(0) == Some(&pid) {
             info!(&ctx, "zygote crashed: {}", pid);
 
+            if !emit(Message::ZygoteCrashed(pid)) {
+                warn!(&ctx, "failed to emit zygote crash message");
+            }
+
             if ZYGOTE_INFO.set(0, 0, BPF_ANY as _).is_err() {
                 warn!(&ctx, "failed to clear zygote pid")
             }
         }
     }
-
-    0
-}
-
-#[repr(C)]
-struct SignalDeliverEvent {
-    sig: i32,
-    _errno: i32,
-    code: i32,
-    _sa_handler: u64,
-    _sa_flags: u64,
-}
-
-#[tracepoint]
-pub fn tracepoint__signal__signal_deliver(ctx: TracePointContext) -> u32 {
-    if !DEBUG {
-        return 0;
-    }
-
-    let event = SignalDeliverEvent::from_context(&ctx);
-    let sig = event.sig as u32;
-
-    if sig != SIGSTOP && sig != SIGCONT {
-        return 0;
-    }
-
-    if !current_is_privileged() {
-        return 0;
-    }
-
-    let current_pid = current_pid();
-
-    debug!(
-        &ctx,
-        "signal deliver to process {}: sig={}, code={}", current_pid, event.sig, event.code
-    );
-
-    0
-}
-
-#[uprobe]
-pub fn uprobe__specialize_common(ctx: ProbeContext) -> u32 {
-    let current_pid = current_pid();
-
-    let uid: i64 = ctx.arg(1).unwrap_or(-1);
-    let gid: i64 = ctx.arg(2).unwrap_or(-1);
-
-    debug!(
-        &ctx,
-        "specialize_common: pid={} uid={} gid={}", current_pid, uid, gid
-    );
 
     0
 }
