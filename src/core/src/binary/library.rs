@@ -2,7 +2,6 @@ use anyhow::Result;
 use nix::fcntl;
 use nix::unistd::Pid;
 use procfs::process::{MMapPath, Process};
-use rustix::path::Arg;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -29,14 +28,12 @@ impl LibraryCache {
     }
 
     pub fn resolve(&self, path: &str) -> Option<usize> {
-        // Fixme: don't copy
+        let realpath = fcntl::readlink(path);
+        let realpath = realpath.as_ref().map(|it| it.to_string_lossy()).unwrap_or(Cow::Borrowed(path));
 
-        let key = fcntl::readlink(path)
-            .map(|it| it.to_string_lossy().into_owned())
-            .unwrap_or(path.into());
         let caches = self.0.read().expect("lock poisoned");
 
-        caches.get(&key).copied()
+        caches.get(&*realpath).copied()
     }
 
     pub fn resolve_name(&self, name: &str) -> Option<usize> {
