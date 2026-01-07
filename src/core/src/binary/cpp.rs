@@ -4,7 +4,7 @@ use log::debug;
 use std::fmt;
 
 #[derive(Default)]
-struct ArgCounter(usize);
+pub struct ArgCounter(usize);
 
 impl ArgCounter {
     fn new() -> Self {
@@ -13,6 +13,18 @@ impl ArgCounter {
 
     fn count(&self) -> usize {
         self.0 + 1
+    }
+
+    pub fn count_args_for_symbol(symbol_name: &str) -> Result<usize> {
+        let sym = Symbol::new(symbol_name)?;
+        let options = DemangleOptions::default();
+
+        debug!("demangle symbol: {} -> {}", symbol_name, sym.demangle()?);
+
+        let mut counter = Self::new();
+        sym.structured_demangle(&mut counter, &options)?;
+
+        Ok(counter.count())
     }
 }
 
@@ -28,16 +40,4 @@ impl DemangleWrite for ArgCounter {
 
         Ok(())
     }
-}
-
-pub fn count_args_for_symbol(symbol_name: &str) -> Result<usize> {
-    let sym = Symbol::new(symbol_name)?;
-    let options = DemangleOptions::default();
-
-    debug!("demangle symbol: {} -> {}", symbol_name, sym.demangle()?);
-
-    let mut counter = ArgCounter::new();
-    sym.structured_demangle(&mut counter, &options)?;
-
-    Ok(counter.count())
 }

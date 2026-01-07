@@ -1,8 +1,16 @@
+use crate::binary::library::SystemLibraryResolver;
 use crate::injector::ptrace::{RegSet, Tracee};
+use crate::misc::ext::ResultExt;
 use anyhow::{Result, bail};
+use nix::libc::{AT_FDCWD, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA, PR_SET_VMA_ANON_NAME};
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
-use std::ffi::c_long;
+use scopeguard::defer;
+use std::ffi::{CString, c_int, c_long};
+use std::fmt::Display;
+use std::ops::Deref;
+use std::os::fd::RawFd;
+use std::path::Path;
 
 #[macro_export]
 macro_rules! build_args {
@@ -29,30 +37,11 @@ impl WaitStatusExt for WaitStatus {
     }
 }
 
-struct RestoreContextGuard<'a> {
-    tracee: &'a Tracee,
-    regs_backup: RegSet,
-}
-
-impl<'a> RestoreContextGuard<'a> {
-    fn new(tracee: &'a Tracee, regs: &RegSet) -> Self {
-        Self {
-            tracee,
-            regs_backup: regs.clone(),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum RemoteFn {
-    Absolute(usize),
-    Relative(usize, usize),
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub trait PtraceExt {
     fn get_arg(&self, index: usize) -> Result<c_long>;
     fn get_args(&self, args: &mut [c_long]) -> Result<()>;
-    fn call_remote(&self, func: RemoteFn, args: &[c_long]) -> Result<c_long>;
 }
 
 impl PtraceExt for Tracee {
@@ -82,23 +71,72 @@ impl PtraceExt for Tracee {
 
         Ok(())
     }
+}
 
-    fn call_remote(&self, func: RemoteFn, args: &[c_long]) -> Result<c_long> {
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#[derive(Debug)]
+pub enum RemoteFn {
+    BaseOffset(usize, usize),
+    LibraryOffset(&'static str, usize),
+    LibrarySymbol(&'static str, &'static str),
+    Absolute(usize),
+}
+
+impl From<(usize, usize)> for RemoteFn {
+    fn from(value: (usize, usize)) -> Self {
+        Self::BaseOffset(value.0, value.1)
+    }
+}
+
+impl From<(&'static str, usize)> for RemoteFn {
+    fn from(value: (&'static str, usize)) -> Self {
+        Self::LibraryOffset(value.0, value.1)
+    }
+}
+
+impl From<(&'static str, &'static str)> for RemoteFn {
+    fn from(value: (&'static str, &'static str)) -> Self {
+        Self::LibrarySymbol(value.0, value.1)
+    }
+}
+
+impl From<usize> for RemoteFn {
+    fn from(value: usize) -> Self {
+        Self::Absolute(value)
+    }
+}
+
+pub trait RemoteLibraryResolver {
+    fn find_library_base(&self, library: &str) -> Result<usize>;
+}
+
+pub trait PtraceRemoteCallExt {
+    fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long>;
+    fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long>;
+}
+
+impl<T> PtraceRemoteCallExt for T
+where
+    T: Deref<Target = Tracee> + RemoteLibraryResolver + Display,
+{
+    fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long> {
         if args.len() > 8 {
             bail!("{self} too many args: {} > 8", args.len());
         }
 
-        let mut regs = self.get_regs()?;
-        let _dontdrop = RestoreContextGuard::new(self, &regs);
+        let regs_backup = self.get_regs()?;
+
+        defer! {
+            self.set_regs(&regs_backup).log_if_error();
+        }
+
+        let mut regs = regs_backup.clone();
 
         let token = regs.get_sp();
 
         regs.align_sp();
-
-        match func {
-            RemoteFn::Absolute(addr) => regs.set_pc(addr),
-            RemoteFn::Relative(base, offset) => regs.set_pc(base + offset),
-        }
+        regs.set_pc(func);
 
         for (i, arg) in args.iter().enumerate() {
             regs.set_arg(i, *arg);
@@ -108,10 +146,19 @@ impl PtraceExt for Tracee {
         self.set_regs(&regs)?;
         self.cont(None)?;
 
-        let status = self.wait()?;
-        let WaitStatus::Stopped(_, Signal::SIGSEGV) = status else {
-            bail!("{self} stopped by {status:?}, expected SIGSEGV");
-        };
+        let mut status = self.wait()?;
+
+        loop {
+            match status {
+                WaitStatus::Stopped(_, Signal::SIGSEGV) => break,
+                WaitStatus::Stopped(_, Signal::SIGCHLD) => {}
+                WaitStatus::Stopped(_, Signal::SIGCONT) => {}
+                _ => bail!("{self} stopped by {status:?}, expected SIGSEGV"),
+            }
+
+            self.cont(status.sig())?;
+            status = self.wait()?;
+        }
 
         regs = self.get_regs()?;
 
@@ -120,5 +167,174 @@ impl PtraceExt for Tracee {
         }
 
         Ok(regs.return_value())
+    }
+
+    fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long> {
+        match func.into() {
+            RemoteFn::BaseOffset(base, offset) => self.call_remote(base + offset, args),
+            RemoteFn::LibraryOffset(library, offset) => {
+                self.call_remote(self.find_library_base(library)? + offset, args)
+            }
+            RemoteFn::LibrarySymbol(library, symbol) => {
+                let resolver = SystemLibraryResolver::instance();
+                self.call_remote(
+                    self.find_library_base(library)? + resolver.resolve(library, symbol)?.addr,
+                    args,
+                )
+            }
+            RemoteFn::Absolute(func) => self.call_remote(func, args),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Todo: leak canary
+pub struct RemoteFd {
+    fd: RawFd,
+}
+
+impl RemoteFd {
+    pub fn new(fd: RawFd) -> Self {
+        Self { fd }
+    }
+
+    pub fn close<T: PtraceRemoteCallExt>(self, tracee: &T) -> Result<()> {
+        tracee.call_remote_auto(("libc", "__close"), build_args!(self.fd))?;
+        Ok(())
+    }
+}
+
+pub struct MmapOptions<'a> {
+    addr: Option<usize>,
+    size: usize,
+    prot: c_int,
+    flags: c_int,
+    fd: Option<&'a RemoteFd>,
+    offset: usize,
+    name: Option<&'a str>,
+}
+
+impl<'a> MmapOptions<'a> {
+    pub fn new(size: usize, prot: c_int, flags: c_int) -> Self {
+        Self {
+            addr: None,
+            size,
+            prot,
+            flags,
+            fd: None,
+            offset: 0,
+            name: None,
+        }
+    }
+
+    pub fn addr(mut self, addr: usize) -> Self {
+        self.addr = Some(addr);
+        self
+    }
+
+    pub fn fd(mut self, fd: &'a RemoteFd) -> Self {
+        self.fd = Some(fd);
+        self
+    }
+
+    pub fn offset(mut self, offset: usize) -> Self {
+        self.offset = offset;
+        self
+    }
+
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.name = Some(name);
+        self
+    }
+}
+
+pub trait PtraceIpcExt {
+    fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd>;
+
+    fn mmap(
+        &self,
+        addr: usize,
+        size: usize,
+        prot: c_int,
+        flags: c_int,
+        fd: Option<&RemoteFd>,
+        offset: usize,
+    ) -> Result<usize>;
+
+    fn mmap_ex(&self, options: MmapOptions) -> Result<usize>;
+}
+
+impl<T> PtraceIpcExt for T
+where
+    T: Deref<Target = Tracee> + PtraceRemoteCallExt + Display,
+{
+    fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd> {
+        let path = CString::new(path.as_ref().to_string_lossy().as_bytes())?;
+
+        self.poke_data(buffer_addr, path.as_bytes_with_nul())?;
+
+        #[rustfmt::skip]
+        let fd = self.call_remote_auto(
+            ("libc", "__openat"),
+            build_args!(AT_FDCWD, buffer_addr, flags)
+        )? as RawFd;
+
+        if fd < 0 {
+            bail!("{self} failed to open {path:?}");
+        }
+
+        Ok(RemoteFd::new(fd))
+    }
+
+    fn mmap(
+        &self,
+        addr: usize,
+        size: usize,
+        prot: c_int,
+        flags: c_int,
+        fd: Option<&RemoteFd>,
+        offset: usize,
+    ) -> Result<usize> {
+        #[rustfmt::skip]
+        let result = self.call_remote_auto(
+            ("libc", "mmap"),
+            build_args!(addr, size, prot, flags, fd.map(|it| it.fd).unwrap_or(-1), offset)
+        )?;
+
+        if result == MAP_FAILED as _ {
+            bail!("failed to call mmap");
+        }
+
+        Ok(result as _)
+    }
+
+    fn mmap_ex(&self, options: MmapOptions) -> Result<usize> {
+        if (options.flags & MAP_ANONYMOUS == 0) && options.name.is_some() {
+            bail!("name provided for non-anonymous mmap")
+        }
+
+        let addr = self.mmap(
+            options.addr.unwrap_or(0),
+            options.size,
+            options.prot,
+            options.flags,
+            options.fd,
+            options.offset,
+        )?;
+
+        if let Some(name) = options.name {
+            let name = CString::new(name.as_bytes())?;
+
+            self.poke_data(addr, name.as_bytes_with_nul())?;
+
+            #[rustfmt::skip]
+            self.call_remote_auto(
+                ("libc", "prctl"),
+                build_args!(PR_SET_VMA, PR_SET_VMA_ANON_NAME, addr, name.as_bytes_with_nul().len(), addr)
+            )?;
+        }
+
+        Ok(addr)
     }
 }

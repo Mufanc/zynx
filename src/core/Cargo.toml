@@ -11,6 +11,7 @@ aya-log = { workspace = true }
 cpp_demangle = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
+jni-sys = { workspace = true }
 log = { workspace = true }
 lzma-rs = { workspace = true }
 nix = { workspace = true }
@@ -20,6 +21,7 @@ once_map = { workspace = true }
 procfs = { workspace = true }
 regex-lite = { workspace = true }
 rustix = { workspace = true }
+scopeguard = { workspace = true }
 tokio = { workspace = true }
 zynx-ebpf-common = { path = "../ebpf-common" }
 

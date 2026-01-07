@@ -173,14 +173,14 @@ impl Monitor {
         zygote_info.set(0, pid, 0 /* BPF_ANY */)?;
         Ok(())
     }
+
+    pub fn instance() -> &'static Monitor {
+        INSTANCE.get().expect("monitor is not running")
+    }
 }
 
 pub async fn init_once(config: Config) -> Result<()> {
     let instance: &'static _ = Box::leak(Box::new(Monitor::new(config).await?));
     INSTANCE.get_or_init(|| instance);
     Ok(())
-}
-
-pub fn instance() -> &'static Monitor {
-    INSTANCE.get().expect("monitor is not running")
 }

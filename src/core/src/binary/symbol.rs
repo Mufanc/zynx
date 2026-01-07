@@ -161,7 +161,7 @@ impl CachedFirstResolver<'_> {
         })
     }
 
-    pub fn resolve(&mut self, pattern: &str) -> Result<Symbol> {
+    pub fn resolve(&self, pattern: &str) -> Result<Symbol> {
         self.caches.map_try_insert(
             pattern.into(),
             |pattern| {

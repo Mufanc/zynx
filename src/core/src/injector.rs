@@ -1,13 +1,13 @@
-use crate::injector::zygote::ZygoteTracer;
 use crate::monitor;
-use crate::monitor::Message;
+use crate::monitor::{Message, Monitor};
 use anyhow::{Result, bail};
+use app::zygote::ZYGOTE_NAME;
+use app::zygote::ZygoteTracer;
 use log::{error, info};
 use procfs::process::Process;
-use zygote::ZYGOTE_NAME;
 
+mod app;
 mod ptrace;
-mod zygote;
 
 fn handle_event(event: &Message) -> Result<()> {
     match event {
@@ -45,7 +45,7 @@ pub async fn serve() -> Result<()> {
 
     monitor::init_once(config).await?;
 
-    let monitor = monitor::instance();
+    let monitor = Monitor::instance();
 
     while let Some(event) = monitor.recv_msg().await {
         if let Err(err) = handle_event(&event) {

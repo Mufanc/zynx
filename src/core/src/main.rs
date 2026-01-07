@@ -1,3 +1,4 @@
+mod android;
 mod binary;
 mod injector;
 mod misc;

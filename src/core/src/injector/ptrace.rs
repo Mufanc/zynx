@@ -1,21 +1,24 @@
 pub mod ext;
 
+use crate::misc::ext::ResultExt;
 use anyhow::{Context, Result, bail};
 use log::{debug, trace};
 use nix::errno::Errno;
 use nix::libc;
 use nix::libc::{PTRACE_GETREGSET, PTRACE_SETREGSET, c_int, iovec, user_regs_struct};
 use nix::sys::signal::Signal;
+use nix::sys::uio::RemoteIoVec;
 use nix::sys::wait::{WaitPidFlag, WaitStatus};
-use nix::sys::{ptrace, signal, wait};
+use nix::sys::{ptrace, signal, uio, wait};
 use nix::unistd::Pid;
 use procfs::ProcError;
 use procfs::process::{ProcState, Process};
 use std::ffi::{c_long, c_void};
 use std::fmt::{Display, Formatter};
+use std::io::{IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
-use std::thread;
 use std::time::Duration;
+use std::{fmt, thread};
 
 #[derive(Clone)]
 pub struct RegSet(user_regs_struct);
@@ -124,6 +127,37 @@ impl Tracee {
         Ok(ptrace::read(self.pid, addr as _)?)
     }
 
+    pub fn peek_data(&self, addr: usize, data: &mut [u8]) -> Result<()> {
+        let iov_remote = RemoteIoVec {
+            base: addr,
+            len: data.len(),
+        };
+        let iov_local = IoSliceMut::new(data);
+
+        uio::process_vm_readv(self.pid, &mut [iov_local], &[iov_remote])
+            .context("failed to read memory")?;
+
+        Ok(())
+    }
+
+    pub fn poke(&self, addr: usize, data: c_long) -> Result<()> {
+        ptrace::write(self.pid, addr as _, data as _)?;
+        Ok(())
+    }
+
+    pub fn poke_data(&self, addr: usize, data: &[u8]) -> Result<()> {
+        let iov_remote = RemoteIoVec {
+            base: addr,
+            len: data.len(),
+        };
+        let iov_local = IoSlice::new(data);
+
+        uio::process_vm_writev(self.pid, &[iov_local], &[iov_remote])
+            .context("failed to write memory")?;
+
+        Ok(())
+    }
+
     pub fn get_regs(&self) -> Result<RegSet> {
         let mut regs: MaybeUninit<user_regs_struct> = MaybeUninit::uninit();
         let iov = iovec {
@@ -157,8 +191,16 @@ impl Tracee {
 }
 
 impl Display for Tracee {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         write!(fmt, "Tracee({})", self.pid)
+    }
+}
+
+impl Drop for Tracee {
+    fn drop(&mut self) {
+        if ptrace::detach(self.pid, None).ok_or_warn().is_some() {
+            debug!("detached from: {self}")
+        }
     }
 }
 
