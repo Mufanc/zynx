@@ -1,0 +1,16 @@
+[package]
+name = "zynx-bridge"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+android_logger = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+nix = { workspace = true, features = ["mman", "user"] }
+proc-macros = { path = "../proc-macros" }
+zynx-bridge-common = { path = "../bridge-common" }
+zynx-common = { path = "../common" }

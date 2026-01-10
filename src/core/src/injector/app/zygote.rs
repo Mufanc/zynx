@@ -1,7 +1,6 @@
 use crate::injector::app::embryo::EmbryoInjector;
-use crate::injector::app::{PAGE_SIZE, ResumeGuard, SC_CONFIG, SC_SHELLCODE};
+use crate::injector::app::{ResumeGuard, SC_CONFIG, SC_SHELLCODE};
 use crate::injector::ptrace::RemoteProcess;
-use crate::misc::ext::ResultExt;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
 use log::info;
@@ -9,10 +8,9 @@ use nix::fcntl;
 use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
-use rustix::path::Arg;
-use std::borrow::Cow;
 use std::sync::{Arc, RwLock};
 use tokio::task;
+use zynx_common::ext::ResultExt;
 
 pub const ZYGOTE_NAME: &str = "zygote64";
 
@@ -38,7 +36,7 @@ impl ZygoteMaps {
         let realpath = realpath
             .as_ref()
             .map(|it| it.to_string_lossy())
-            .unwrap_or(Cow::Borrowed(path));
+            .unwrap_or(path.into());
 
         self.0.iter().find_map(|vma| {
             if let MMapPath::Path(path) = &vma.pathname
@@ -79,10 +77,6 @@ impl SwbpConfig {
 
     pub fn addr(&self) -> usize {
         self.addr
-    }
-
-    pub fn page_addr(&self) -> usize {
-        self.addr & !(*PAGE_SIZE - 1)
     }
 
     pub fn backup(&self) -> &[u8] {

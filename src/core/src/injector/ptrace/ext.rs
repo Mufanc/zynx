@@ -1,14 +1,10 @@
-pub mod remote_call;
 pub mod base;
 pub mod ipc;
 pub mod jni;
+pub mod remote_call;
 
-use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
-use crate::misc::ext::ResultExt;
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
-use std::fmt::Display;
-use std::ops::Deref;
 
 #[macro_export]
 macro_rules! build_args {

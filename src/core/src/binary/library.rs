@@ -19,7 +19,7 @@ impl SystemLibraryResolver<'_> {
     pub fn resolve(&self, name: &str, pattern: &str) -> Result<Symbol> {
         self.resolvers.map_try_insert(
             name.into(),
-            |name| CachedFirstResolver::new(format!("/system/lib64/{name}.so")),
+            |name| CachedFirstResolver::from_file(format!("/system/lib64/{name}.so")),
             |_, v| v.resolve(pattern),
         )?
     }

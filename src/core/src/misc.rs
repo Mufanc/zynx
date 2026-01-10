@@ -1,5 +1,3 @@
-pub mod ext;
-
 use nix::libc;
 use std::panic;
 

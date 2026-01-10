@@ -1,4 +1,5 @@
-use std::ffi::{CStr, CString, c_char};
+use nix::libc::c_char;
+use std::ffi::{CStr, CString};
 
 unsafe extern "C" {
     fn __system_property_get(name: *const c_char, value: *mut c_char) -> u32;

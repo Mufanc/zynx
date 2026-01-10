@@ -1,26 +1,38 @@
-use crate::{build_args, jni_fn};
 use crate::injector::app::zygote::{SwbpConfig, ZygoteMaps};
-use crate::injector::app::{API_LEVEL, PAGE_SIZE, ResumeGuard, SC_CONFIG};
-use crate::injector::ptrace::RemoteProcess;
-use crate::injector::ptrace::ext::{
-    WaitStatusExt,
-};
-use crate::misc::ext::ResultExt;
+use crate::injector::app::{API_LEVEL, ResumeGuard, SC_CONFIG};
+use crate::injector::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
+use crate::injector::ptrace::{RegSet, RemoteProcess};
+use crate::injector::ptrace::ext::WaitStatusExt;
+use crate::injector::ptrace::ext::base::PtraceExt;
+use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
+use crate::injector::ptrace::ext::jni::PtraceJniExt;
+use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
+use crate::injector::trampoline::Bridge;
+use crate::injector::{PAGE_SIZE, misc};
+use crate::build_args;
 use anyhow::{Context, Result, bail};
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use log::{debug, warn};
-use nix::libc::MADV_DONTNEED;
+use nix::libc::{
+    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, c_long,
+};
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
-use std::ffi::c_long;
+use scopeguard::defer;
+use std::{fmt, slice};
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use std::fmt;
-use crate::injector::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
-use crate::injector::ptrace::ext::base::PtraceExt;
-use crate::injector::ptrace::ext::jni::PtraceJniExt;
-use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
+use std::os::fd::{AsFd, AsRawFd};
+use once_cell::sync::Lazy;
+use zynx_bridge_common::{EmbryoTrampolineArgs, EmbryoTrampolineFnPtrs, MemoryRegion, SpecializeHookInfo};
+use zynx_common::ext::ResultExt;
+
+static BUFFER_SIZE: Lazy<usize> = Lazy::new(|| {
+    let buffer_size = *PAGE_SIZE;
+    assert!(size_of::<EmbryoTrampolineArgs>() <= buffer_size);
+    buffer_size
+});
 
 #[derive(Debug, Clone)]
 pub struct SpecializeArgs {
@@ -51,7 +63,7 @@ pub struct SpecializeArgs {
 impl SpecializeArgs {
     #[allow(unused_mut)]
     #[allow(unused_variables)]
-    pub fn new<T: AsRef<[c_long]>>(args: T, api_level: i32) -> Self {
+    pub fn new<T: AsRef<[c_long]>>(args: &T, api_level: i32) -> Self {
         let args = args.as_ref().as_ptr();
         let mut index = 0;
 
@@ -132,6 +144,10 @@ impl EmbryoInjector {
         self.seize()?;
         self.kill(Signal::SIGCONT)?;
 
+        defer! {
+            self.detach(None).log_if_error();
+        }
+
         loop {
             let status = self.wait()?;
 
@@ -148,20 +164,20 @@ impl EmbryoInjector {
                 }
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
                     let regs = self.get_regs()?;
-                    let mut args = vec![0; SC_CONFIG.args_cnt];
+                    let mut raw_args = vec![0; SC_CONFIG.args_cnt];
 
-                    self.get_args(&mut args)?;
+                    self.get_args(&mut raw_args)?;
                     self.restore_swbp()?;
 
-                    let args = SpecializeArgs::new(args, *API_LEVEL);
+                    let args = SpecializeArgs::new(&raw_args, *API_LEVEL);
 
                     debug!("{self} specialize args: {args:?}");
 
                     if self.check_process(&args)? {
-                        self.do_inject(&args)?;
+                        self.do_inject(&regs, &raw_args)?;
+                    } else {
+                        self.set_regs(&regs)?;
                     }
-
-                    self.set_regs(&regs)?;
 
                     break;
                 }
@@ -186,7 +202,7 @@ impl EmbryoInjector {
         #[rustfmt::skip]
         let result = self.call_remote_auto(
             ("libc", "madvise"),
-            build_args!(swbp.page_addr(), *PAGE_SIZE, MADV_DONTNEED)
+            build_args!(misc::floor_to_page_size(swbp.addr()), *PAGE_SIZE, MADV_DONTNEED)
         )?;
 
         if result == -1 {
@@ -201,25 +217,29 @@ impl EmbryoInjector {
             Uid::from_raw(args.uid as _),
             Gid::from_raw(args.gid as _),
             args.is_system_server,
-            args.is_child_zygote
+            args.is_child_zygote,
         );
 
         self.check_process_with_structured_args(args, fast_args)
     }
-    
-    fn check_process_with_structured_args(&self, specialize_args: &SpecializeArgs, check_args: EmbryoCheckArgs) -> Result<bool> {
+
+    fn check_process_with_structured_args(
+        &self,
+        specialize_args: &SpecializeArgs,
+        check_args: EmbryoCheckArgs,
+    ) -> Result<bool> {
         Ok(match InjectorPolicy::check_embryo(&check_args) {
             EmbryoCheckResult::Deny => false,
             EmbryoCheckResult::Allow => true,
             EmbryoCheckResult::MoreInfo => {
                 if check_args.is_slow() {
                     warn!("recursive check detected, denying process");
-                    return Ok(false)
+                    return Ok(false);
                 }
-                
+
                 let slow_args = check_args.into_slow(
                     self.read_jstring(specialize_args.env, specialize_args.managed_nice_name)?,
-                    self.read_jstring(specialize_args.env, specialize_args.managed_app_data_dir)?
+                    self.read_jstring(specialize_args.env, specialize_args.managed_app_data_dir)?,
                 );
 
                 self.check_process_with_structured_args(specialize_args, slow_args)?
@@ -227,8 +247,71 @@ impl EmbryoInjector {
         })
     }
 
-    fn do_inject(&self, args: &SpecializeArgs) -> Result<()> {
-        // Todo:
+    fn do_inject(&self, regs: &RegSet, raw_args: &[c_long]) -> Result<()> {
+        let buffer_addr = self.mmap_ex(
+            MmapOptions::new(
+                *BUFFER_SIZE,
+                PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS,
+            )
+            .name("zynx::buffer"),
+        )?;
+        let conn = self.connect(buffer_addr)?;
+
+        let bridge = Bridge::instance();
+        let bridge_fd = self.install_fd(buffer_addr, &conn, bridge.as_fd())?;
+
+        debug!("{self} bridge fd: {bridge_fd:?}");
+
+        let bridge_fd_num = bridge_fd.as_raw_fd();
+
+        let trampoline_addr = self.mmap_ex(
+            MmapOptions::new(bridge.trampoline_size(), PROT_READ | PROT_EXEC, MAP_PRIVATE).fd(&bridge_fd),
+        )?;
+
+        bridge_fd.forget();
+        conn.close(self)?;
+
+        let offset = bridge.resolve("embryo_trampoline_entry")?;
+        let args = EmbryoTrampolineArgs {
+            bridge_library_fd: bridge_fd_num,
+            fn_ptrs: EmbryoTrampolineFnPtrs {
+                dlopen: self.resolve_fn(("libdl", "android_dlopen_ext"))?,
+                dlsym: self.resolve_fn(("libdl", "dlsym"))?
+            },
+            trampoline_region: MemoryRegion {
+                base: trampoline_addr,
+                size: misc::ceil_to_page_size(bridge.trampoline_size()),
+            },
+            buffer_region: MemoryRegion {
+                base: buffer_addr,
+                size: misc::ceil_to_page_size(*BUFFER_SIZE),
+            },
+            specialize_hook: SpecializeHookInfo {
+                specialize_fn: self.swbp.addr(),
+                specialize_args: {
+                    let mut args = [0; _];
+                    args[..raw_args.len()].copy_from_slice(raw_args);
+                    args
+                },
+                specialize_args_count: raw_args.len(),
+                return_sp: regs.get_sp(),
+                return_fp: regs.get_fp(),
+                return_lr: regs.get_lr(),
+                callee_saves: regs.callee_saves(),
+            },
+        };
+
+        let args_slice = unsafe {
+            slice::from_raw_parts(&args as *const _ as *const u8, size_of_val(&args))
+        };
+
+        self.poke_data(buffer_addr, args_slice)?;
+        self.call_remote_auto_nowait(
+            trampoline_addr + offset,
+            0, /* embryo will never return from this call */
+            build_args!(buffer_addr),
+        )?;
 
         Ok(())
     }
@@ -239,14 +322,6 @@ impl Deref for EmbryoInjector {
 
     fn deref(&self) -> &Self::Target {
         &self.tracee
-    }
-}
-
-impl Drop for EmbryoInjector {
-    fn drop(&mut self) {
-        if self.tracee.detach(None).ok_or_warn().is_some() {
-            debug!("detached from: {}", self.tracee)
-        }
     }
 }
 

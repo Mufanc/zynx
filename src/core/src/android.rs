@@ -1,1 +1,1 @@
-pub mod sysprop;
+pub mod properties;

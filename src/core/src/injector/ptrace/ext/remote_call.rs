@@ -1,17 +1,17 @@
+use crate::binary::library::SystemLibraryResolver;
+use crate::injector::ptrace::RemoteProcess;
+use crate::injector::ptrace::ext::WaitStatusExt;
 use anyhow::Result;
-use std::ffi::c_long;
-use std::fmt::Display;
-use std::ops::Deref;
 use anyhow::bail;
-use log::debug;
+use log::trace;
 use nix::errno::Errno;
+use nix::libc::c_long;
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
 use scopeguard::defer;
-use crate::binary::library::SystemLibraryResolver;
-use crate::injector::ptrace::ext::WaitStatusExt;
-use crate::injector::ptrace::RemoteProcess;
-use crate::misc::ext::ResultExt;
+use std::fmt::Display;
+use std::ops::Deref;
+use zynx_common::ext::ResultExt;
 
 #[derive(Debug)]
 pub enum RemoteFn {
@@ -51,7 +51,14 @@ pub trait RemoteLibraryResolver {
 
 pub trait PtraceRemoteCallExt {
     fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long>;
+    fn resolve_fn<F: Into<RemoteFn>>(&self, func: F) -> Result<usize>;
     fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long>;
+    fn call_remote_auto_nowait<F: Into<RemoteFn>>(
+        &self,
+        func: F,
+        return_addr: usize,
+        args: &[c_long],
+    ) -> Result<()>;
     fn errno(&self) -> Result<Errno>;
 }
 
@@ -64,7 +71,7 @@ where
             bail!("{self} too many args: {} > 8", args.len());
         }
 
-        debug!("call remote: {func:0>12x} {args:?}");
+        trace!("call remote with args: {args:?}");
 
         let regs_backup = self.get_regs()?;
 
@@ -110,24 +117,43 @@ where
         Ok(regs.return_value())
     }
 
-    fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long> {
-        match func.into() {
-            RemoteFn::BaseOffset(base, offset) => self.call_remote(base + offset, args),
-            RemoteFn::LibraryOffset(library, offset) => {
-                self.call_remote(self.find_library_base(library)? + offset, args)
-            }
+    fn resolve_fn<F: Into<RemoteFn>>(&self, func: F) -> Result<usize> {
+        Ok(match func.into() {
+            RemoteFn::BaseOffset(base, offset) => base + offset,
+            RemoteFn::LibraryOffset(library, offset) => self.find_library_base(library)? + offset,
             RemoteFn::LibrarySymbol(library, symbol) => {
                 let resolver = SystemLibraryResolver::instance();
-
-                debug!("offset = {}", resolver.resolve(library, symbol)?.addr);
-
-                self.call_remote(
-                    self.find_library_base(library)? + resolver.resolve(library, symbol)?.addr,
-                    args,
-                )
+                self.find_library_base(library)? + resolver.resolve(library, symbol)?.addr
             }
-            RemoteFn::Absolute(func) => self.call_remote(func, args),
+            RemoteFn::Absolute(addr) => addr,
+        })
+    }
+
+    fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long> {
+        self.call_remote(self.resolve_fn(func)?, args)
+    }
+
+    fn call_remote_auto_nowait<F: Into<RemoteFn>>(
+        &self,
+        func: F,
+        return_addr: usize,
+        args: &[c_long],
+    ) -> Result<()> {
+        let addr = self.resolve_fn(func)?;
+
+        let mut regs = self.get_regs()?;
+
+        regs.align_sp();
+        regs.set_pc(addr);
+
+        for (i, arg) in args.iter().enumerate() {
+            regs.set_arg(i, *arg);
         }
+
+        regs.set_lr(return_addr);
+
+        self.set_regs(&regs)?;
+        self.detach(None)
     }
 
     fn errno(&self) -> Result<Errno> {

@@ -1,28 +1,56 @@
+use crate::build_args;
+use crate::injector::ptrace::RemoteProcess;
+use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
 use anyhow::Result;
-use std::ffi::{c_int, CString};
+use anyhow::bail;
+use log::warn;
+use nix::libc::{
+    AF_UNIX, AT_FDCWD, CMSG_DATA, CMSG_FIRSTHDR, CMSG_SPACE, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA,
+    PR_SET_VMA_ANON_NAME, SOCK_SEQPACKET, c_int, msghdr,
+};
+use nix::sys::socket;
+use nix::sys::socket::{ControlMessage, MsgFlags};
+use std::ffi::CString;
 use std::fmt::Display;
 use std::ops::Deref;
-use std::os::fd::RawFd;
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
-use anyhow::bail;
-use nix::libc::{AT_FDCWD, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA, PR_SET_VMA_ANON_NAME};
-use crate::build_args;
-use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
-use crate::injector::ptrace::RemoteProcess;
+use std::{mem, ptr, slice};
+use syscalls::{Sysno, syscall};
 
-// Todo: leak canary
+#[derive(Debug)]
 pub struct RemoteFd {
     fd: RawFd,
+    leak: bool,
 }
 
 impl RemoteFd {
     pub fn new(fd: RawFd) -> Self {
-        Self { fd }
+        Self { fd, leak: true }
     }
 
-    pub fn close<T: PtraceRemoteCallExt>(self, tracee: &T) -> Result<()> {
+    pub fn close<T: PtraceRemoteCallExt>(mut self, tracee: &T) -> Result<()> {
         tracee.call_remote_auto(("libc", "__close"), build_args!(self.fd))?;
+        self.leak = false;
         Ok(())
+    }
+
+    pub fn forget(mut self) {
+        self.leak = false;
+    }
+}
+
+impl AsRawFd for RemoteFd {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd
+    }
+}
+
+impl Drop for RemoteFd {
+    fn drop(&mut self) {
+        if self.leak {
+            warn!("remote fd leaked: {}", self.fd);
+        }
     }
 }
 
@@ -70,6 +98,25 @@ impl<'a> MmapOptions<'a> {
     }
 }
 
+pub struct SocketConnection {
+    pub local_fd: OwnedFd,
+    pub remote_fd: RemoteFd,
+}
+
+impl SocketConnection {
+    fn new(local_fd: OwnedFd, remote_fd: RemoteFd) -> Self {
+        Self {
+            local_fd,
+            remote_fd,
+        }
+    }
+
+    pub fn close<T: PtraceRemoteCallExt>(self, tracee: &T) -> Result<()> {
+        self.remote_fd.close(tracee)?;
+        Ok(())
+    }
+}
+
 pub trait PtraceIpcExt {
     fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd>;
 
@@ -84,6 +131,17 @@ pub trait PtraceIpcExt {
     ) -> Result<usize>;
 
     fn mmap_ex(&self, options: MmapOptions) -> Result<usize>;
+
+    fn take_fd(&self, remote_fd: RawFd) -> Result<OwnedFd>;
+
+    fn install_fd(
+        &self,
+        buffer_addr: usize,
+        conn: &SocketConnection,
+        fd: BorrowedFd,
+    ) -> Result<RemoteFd>;
+
+    fn connect(&self, buffer_addr: usize) -> Result<SocketConnection>;
 }
 
 impl<T> PtraceIpcExt for T
@@ -124,7 +182,8 @@ where
         )?;
 
         if result == MAP_FAILED as _ {
-            bail!("failed to call mmap");
+            let errno = self.errno()?;
+            bail!("failed to call mmap: {errno}");
         }
 
         Ok(result as _)
@@ -157,5 +216,96 @@ where
         }
 
         Ok(addr)
+    }
+
+    fn take_fd(&self, remote_fd: RawFd) -> Result<OwnedFd> {
+        unsafe {
+            let pfd =
+                OwnedFd::from_raw_fd(syscall!(Sysno::pidfd_open, self.pid.as_raw(), 0)? as RawFd);
+
+            Ok(OwnedFd::from_raw_fd(
+                syscall!(Sysno::pidfd_getfd, pfd.as_raw_fd(), remote_fd, 0)? as RawFd,
+            ))
+        }
+    }
+
+    fn install_fd(
+        &self,
+        buffer_addr: usize,
+        conn: &SocketConnection,
+        fd: BorrowedFd,
+    ) -> Result<RemoteFd> {
+        let buffer_len = unsafe { CMSG_SPACE(size_of::<i32>() as _) } as usize;
+
+        let mut header = msghdr {
+            msg_name: ptr::null_mut(),
+            msg_namelen: 0,
+            msg_iov: ptr::null_mut(),
+            msg_iovlen: 0,
+            msg_control: buffer_addr as _,
+            msg_controllen: buffer_len as _,
+            msg_flags: 0,
+        };
+
+        let header_addr = (buffer_addr + buffer_len + 0xf) & !0xf; // align to 16 bytes
+        let header_slice = unsafe {
+            slice::from_raw_parts(&header as *const _ as *const u8, size_of_val(&header))
+        };
+
+        socket::sendmsg::<()>(
+            conn.local_fd.as_raw_fd(),
+            &[],
+            &[ControlMessage::ScmRights(&[fd.as_raw_fd()])],
+            MsgFlags::empty(),
+            None,
+        )?;
+
+        self.poke_data(header_addr, header_slice)?;
+
+        #[rustfmt::skip]
+        self.call_remote_auto(
+            ("libc", "recvmsg"),
+            build_args!(conn.remote_fd.as_raw_fd(), header_addr, 0)
+        )?;
+
+        if self.peek(header_addr + mem::offset_of!(msghdr, msg_controllen))? == 0 {
+            bail!("failed to install fd, please check your sepolicy rules")
+        }
+
+        let mut buffer = vec![0; buffer_len];
+
+        self.peek_data(buffer_addr, &mut buffer)?;
+
+        header.msg_control = buffer.as_ptr() as _;
+
+        let cmsg = unsafe { CMSG_FIRSTHDR(&header) };
+        let data = unsafe { CMSG_DATA(cmsg) };
+
+        Ok(RemoteFd::new(unsafe { *(data as *const i32) }))
+    }
+
+    fn connect(&self, buffer_addr: usize) -> Result<SocketConnection> {
+        let result = self.call_remote_auto(
+            ("libc", "socketpair"),
+            build_args!(AF_UNIX, SOCK_SEQPACKET, 0, buffer_addr),
+        )?;
+
+        if result != 0 {
+            bail!("{self} failed to call socketpair")
+        }
+
+        let pair = self.peek(buffer_addr)?;
+
+        let local_fd_num = (pair & 0xffffffff) as i32;
+        let remote_fd_num = (pair >> 32) as i32;
+
+        let local_fd = self.take_fd(local_fd_num)?;
+
+        RemoteFd::new(local_fd_num).close(self)?;
+
+        Ok(SocketConnection::new(
+            local_fd,
+            RemoteFd::new(remote_fd_num),
+        ))
     }
 }

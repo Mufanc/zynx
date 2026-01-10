@@ -5,11 +5,12 @@ use aya::{Ebpf, include_bytes_aligned};
 use aya_log::EbpfLogger;
 use log::{error, info, warn};
 use nix::unistd::Pid;
-use rustix::process;
-use rustix::process::{Resource, Rlimit};
 use std::ffi::CStr;
 use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
+use nix::libc::RLIM_INFINITY;
+use nix::sys::resource;
+use nix::sys::resource::Resource;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex as AsyncMutex;
@@ -70,13 +71,7 @@ where
 
 impl Monitor {
     async fn new(config: Config) -> Result<Self> {
-        process::setrlimit(
-            Resource::Memlock,
-            Rlimit {
-                current: None,
-                maximum: None,
-            },
-        )?;
+        resource::setrlimit(Resource::RLIMIT_MEMLOCK, RLIM_INFINITY, RLIM_INFINITY)?;
 
         let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
             env!("OUT_DIR"),
@@ -174,7 +169,7 @@ impl Monitor {
         Ok(())
     }
 
-    pub fn instance() -> &'static Monitor {
+    pub fn instance() -> &'static Self {
         INSTANCE.get().expect("monitor is not running")
     }
 }

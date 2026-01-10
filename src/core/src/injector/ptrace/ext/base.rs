@@ -1,6 +1,6 @@
-use anyhow::Result;
-use std::ffi::c_long;
 use crate::injector::ptrace::RemoteProcess;
+use anyhow::Result;
+use nix::libc::c_long;
 
 pub trait PtraceExt {
     fn get_arg(&self, index: usize) -> Result<c_long>;

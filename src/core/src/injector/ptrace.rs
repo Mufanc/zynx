@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use log::{debug, trace};
 use nix::errno::Errno;
 use nix::libc;
-use nix::libc::{PTRACE_GETREGSET, PTRACE_SETREGSET, c_int, iovec, user_regs_struct};
+use nix::libc::{PTRACE_GETREGSET, PTRACE_SETREGSET, c_int, c_long, iovec, user_regs_struct};
 use nix::sys::signal::Signal;
 use nix::sys::uio::RemoteIoVec;
 use nix::sys::wait::{WaitPidFlag, WaitStatus};
@@ -12,11 +12,12 @@ use nix::sys::{ptrace, signal, uio, wait};
 use nix::unistd::Pid;
 use procfs::ProcError;
 use procfs::process::{ProcState, Process};
-use std::ffi::{c_long, c_void};
+use std::ffi::c_void;
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
 use std::io::{IoSlice, IoSliceMut, Seek, SeekFrom, Write};
 use std::mem::MaybeUninit;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{fmt, thread};
 
@@ -32,6 +33,10 @@ impl RegSet {
 
     fn as_ptr(&self) -> *const c_void {
         &self.0 as *const user_regs_struct as _
+    }
+
+    pub fn get_fp(&self) -> usize {
+        self.0.regs[29] as _
     }
 
     pub fn get_sp(&self) -> usize {
@@ -81,6 +86,16 @@ impl RegSet {
     pub fn return_value(&self) -> c_long {
         self.0.regs[0] as _
     }
+
+    pub fn callee_saves(&self) -> [usize; 10] {
+        let mut regs = [0; 10];
+
+        self.0.regs[19..29].iter().enumerate().for_each(|(i, reg)| {
+            regs[i] = *reg as _;
+        });
+
+        regs
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -88,12 +103,14 @@ impl RegSet {
 #[derive(Debug)]
 pub struct RemoteProcess {
     pid: Pid,
+    attached: AtomicBool,
 }
 
 impl RemoteProcess {
     pub fn new(pid: Pid) -> Self {
         Self {
             pid: Pid::from_raw(pid.as_raw()),
+            attached: AtomicBool::new(false),
         }
     }
 
@@ -104,12 +121,14 @@ impl RemoteProcess {
     pub fn seize(&self) -> Result<()> {
         self.ptrace_raw(0x4206 /* PTRACE_SEIZE */, 0, 0)
             .context("ptrace::seize")?;
+        debug!("attached to {self}");
+        self.attached.store(true, Ordering::Release);
         Ok(())
     }
 
     pub fn wait(&self) -> Result<WaitStatus> {
         let status = wait::waitpid(self.pid, Some(WaitPidFlag::__WALL)).context("ptrace::wait");
-        trace!("{self:?} wait status: {status:?}");
+        trace!("{self} wait status: {status:?}");
         status
     }
 
@@ -202,7 +221,12 @@ impl RemoteProcess {
     }
 
     pub fn detach<T: Into<Option<Signal>>>(&self, sig: T) -> Result<()> {
-        ptrace::detach(self.pid, sig)?;
+        if self.attached.load(Ordering::Acquire) {
+            ptrace::detach(self.pid, sig)?;
+            self.attached.store(false, Ordering::Release);
+            debug!("detached from {self}");
+        }
+
         Ok(())
     }
 }

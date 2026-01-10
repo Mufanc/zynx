@@ -1,29 +1,25 @@
-use crate::android::sysprop;
+use crate::android::properties;
 use crate::binary::cpp::ArgCounter;
 use crate::binary::symbol::{Section, Symbol, SymbolResolver};
-use crate::misc::ext::ResultExt;
 use anyhow::Result;
 use dynasmrt::dynasm;
 use log::info;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
-use nix::unistd::{Pid, SysconfVar};
-use nix::unistd;
+use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use regex_lite::Regex;
 use scopeguard::ScopeGuard;
+use zynx_common::ext::ResultExt;
 
 mod embryo;
 pub mod zygote;
 
 pub static API_LEVEL: Lazy<i32> = Lazy::new(|| {
-    sysprop::get("ro.build.version.sdk")
+    properties::get("ro.build.version.sdk")
         .parse()
         .expect("failed to parse api level")
 });
-
-pub static PAGE_SIZE: Lazy<usize> =
-    Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);
 
 pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 

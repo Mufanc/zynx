@@ -1,19 +1,18 @@
-use std::ops::Deref;
-use log::warn;
-use nix::errno::Errno;
+use log::{debug, warn};
 use nix::unistd::{Gid, Uid};
+use std::ops::Deref;
 
 pub struct EmbryoCheckArgsFast {
     pub uid: Uid,
     pub gid: Gid,
     pub is_system_server: bool,
-    pub is_child_zygote: bool
+    pub is_child_zygote: bool,
 }
 
 pub struct EmbryoCheckArgsSlow {
     fast_args: EmbryoCheckArgsFast,
     pub nice_name: Option<String>,
-    pub app_data_dir: Option<String>
+    pub app_data_dir: Option<String>,
 }
 
 impl Deref for EmbryoCheckArgsSlow {
@@ -26,7 +25,7 @@ impl Deref for EmbryoCheckArgsSlow {
 
 pub enum EmbryoCheckArgs {
     Fast(EmbryoCheckArgsFast),
-    Slow(EmbryoCheckArgsSlow)
+    Slow(EmbryoCheckArgsSlow),
 }
 
 impl EmbryoCheckArgs {
@@ -35,7 +34,7 @@ impl EmbryoCheckArgs {
             uid,
             gid,
             is_system_server,
-            is_child_zygote
+            is_child_zygote,
         })
     }
 
@@ -45,16 +44,20 @@ impl EmbryoCheckArgs {
                 EmbryoCheckArgs::Fast(args) => args,
                 EmbryoCheckArgs::Slow(args) => {
                     warn!("into_slow called on already slow args, ignoring conversion");
-                    return Self::Slow(args)
+                    return Self::Slow(args);
                 }
             },
             nice_name,
-            app_data_dir
+            app_data_dir,
         })
     }
 
+    pub fn is_fast(&self) -> bool {
+        matches!(self, EmbryoCheckArgs::Fast(_))
+    }
+
     pub fn is_slow(&self) -> bool {
-        matches!(self, EmbryoCheckArgs::Slow(_))
+        !self.is_fast()
     }
 }
 
@@ -64,18 +67,20 @@ pub enum EmbryoCheckResult {
     MoreInfo,
 }
 
-pub struct InjectorPolicy {
-
-}
+pub struct InjectorPolicy {}
 
 impl InjectorPolicy {
     pub fn check_embryo(args: &EmbryoCheckArgs) -> EmbryoCheckResult {
         match args {
-            EmbryoCheckArgs::Fast { .. } => {
-                EmbryoCheckResult::MoreInfo
-            }
-            EmbryoCheckArgs::Slow { .. } => {
-                EmbryoCheckResult::Deny
+            EmbryoCheckArgs::Fast(_) => EmbryoCheckResult::MoreInfo,
+            EmbryoCheckArgs::Slow(slow) => {
+                debug!("nice name = {:?}", slow.nice_name);
+
+                if slow.is_system_server {
+                    EmbryoCheckResult::Allow
+                } else {
+                    EmbryoCheckResult::Deny
+                }
             }
         }
     }

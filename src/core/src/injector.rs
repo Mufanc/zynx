@@ -4,11 +4,19 @@ use anyhow::{Result, bail};
 use app::zygote::ZYGOTE_NAME;
 use app::zygote::ZygoteTracer;
 use log::{error, info};
+use nix::unistd;
+use nix::unistd::SysconfVar;
+use once_cell::sync::Lazy;
 use procfs::process::Process;
 
 mod app;
-mod ptrace;
+mod misc;
 mod policy;
+mod ptrace;
+mod trampoline;
+
+pub static PAGE_SIZE: Lazy<usize> =
+    Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);
 
 fn handle_event(event: &Message) -> Result<()> {
     match event {

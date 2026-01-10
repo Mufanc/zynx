@@ -1,0 +1,4 @@
+[package]
+name = "zynx-bridge-common"
+version.workspace = true
+edition.workspace = true

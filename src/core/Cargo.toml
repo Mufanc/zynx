@@ -14,15 +14,18 @@ env_logger = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 lzma-rs = { workspace = true }
-nix = { workspace = true }
+memfd = { workspace = true }
+nix = { workspace = true, features = ["feature", "fs", "process", "ptrace", "resource", "signal", "socket", "uio", "user"] }
 object = { workspace = true }
 once_cell = { workspace = true }
 once_map = { workspace = true }
 procfs = { workspace = true }
 regex-lite = { workspace = true }
-rustix = { workspace = true }
 scopeguard = { workspace = true }
+syscalls = { workspace = true }
 tokio = { workspace = true }
+zynx-bridge-common = { path = "../bridge-common" }
+zynx-common = { path = "../common" }
 zynx-ebpf-common = { path = "../ebpf-common" }
 
 [build-dependencies]

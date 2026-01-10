@@ -1,4 +1,3 @@
-use crate::misc::ext::ResultExt;
 use anyhow::{Context, Result};
 use object::{Object, ObjectSection, ObjectSymbol, SectionIndex};
 use once_map::OnceMap;
@@ -9,6 +8,7 @@ use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::path::Path;
 use std::pin::Pin;
+use zynx_common::ext::ResultExt;
 
 #[derive(Debug, Clone)]
 pub struct Symbol {
@@ -156,11 +156,16 @@ pub struct CachedFirstResolver<'a> {
 }
 
 impl CachedFirstResolver<'_> {
-    pub fn new<P: AsRef<Path>>(file: P) -> Result<Self> {
-        let resolver = SymbolResolver::from_file(file)?;
-
+    pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Self> {
         Ok(Self {
-            resolver,
+            resolver: SymbolResolver::from_file(file)?,
+            caches: OnceMap::new(),
+        })
+    }
+
+    pub fn from_data(data: Vec<u8>) -> Result<Self> {
+        Ok(Self {
+            resolver: SymbolResolver::from_data(data)?,
             caches: OnceMap::new(),
         })
     }
@@ -181,5 +186,9 @@ impl CachedFirstResolver<'_> {
             },
             |_, v| v.clone(),
         )
+    }
+
+    pub fn inner(&self) -> &SymbolResolver<'_> {
+        &self.resolver
     }
 }

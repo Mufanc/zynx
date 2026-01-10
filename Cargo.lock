@@ -663,12 +663,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f52b00d39961fc5b2736ea853c9cc86238e165017a493d1d5c8eac6bdc4cc273"
 
 [[package]]
+name = "memfd"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad38eb12aea514a0466ea40a80fd8cc83637065948eb4a426e4aa46261175227"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "memmap2"
 version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "744133e4a0e0a658e1374cf3bf8e415c4052a15a111acd372764c55b4177d490"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "488016bfae457b036d996092f6cb448677611ce4449e970ceaf42695203f218a"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -702,6 +720,7 @@ dependencies = [
  "cfg-if",
  "cfg_aliases",
  "libc",
+ "memoffset",
 ]
 
 [[package]]
@@ -857,6 +876,15 @@ dependencies = [
  "quote",
  "syn 2.0.112",
  "version_check",
+]
+
+[[package]]
+name = "proc-macros"
+version = "1.0.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.112",
 ]
 
 [[package]]
@@ -1030,6 +1058,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_repr"
+version = "0.1.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "175ee3e80ae9982737ca543e96133087cbd9a485eecc3bc4de9c1a37b47ea59c"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.112",
+]
+
+[[package]]
 name = "shlex"
 version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,6 +1132,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syscalls"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90db46b5b4962319605d435986c775ea45a0ad2561c09e1d5372b89afeb49cf4"
+dependencies = [
+ "serde",
+ "serde_repr",
 ]
 
 [[package]]
@@ -1433,17 +1482,44 @@ dependencies = [
  "jni-sys",
  "log",
  "lzma-rs",
+ "memfd",
  "nix",
  "object",
  "once_cell",
  "once_map",
  "procfs",
  "regex-lite",
- "rustix",
  "scopeguard",
+ "syscalls",
  "tokio",
+ "zynx-bridge-common",
+ "zynx-common",
  "zynx-ebpf",
  "zynx-ebpf-common",
+]
+
+[[package]]
+name = "zynx-bridge"
+version = "1.0.0"
+dependencies = [
+ "android_logger",
+ "anyhow",
+ "log",
+ "nix",
+ "proc-macros",
+ "zynx-bridge-common",
+ "zynx-common",
+]
+
+[[package]]
+name = "zynx-bridge-common"
+version = "1.0.0"
+
+[[package]]
+name = "zynx-common"
+version = "1.0.0"
+dependencies = [
+ "log",
 ]
 
 [[package]]

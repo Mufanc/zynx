@@ -1,13 +1,13 @@
+use crate::build_args;
+use crate::injector::ptrace::RemoteProcess;
+use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
 use anyhow::Result;
-use std::ffi::c_long;
+use jni_sys::{JNIEnv, jchar, jstring};
+use nix::libc::c_long;
+use scopeguard::defer;
 use std::fmt::Display;
 use std::ops::Deref;
-use jni_sys::{jchar, jstring, JNIEnv};
-use scopeguard::defer;
-use crate::build_args;
-use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
-use crate::injector::ptrace::RemoteProcess;
-use crate::misc::ext::ResultExt;
+use zynx_common::ext::ResultExt;
 
 #[macro_export]
 macro_rules! jni_fn {
@@ -23,7 +23,7 @@ pub trait PtraceJniExt {
 
 impl<T> PtraceJniExt for T
 where
-    T: Deref<Target = RemoteProcess> + PtraceRemoteCallExt + Display
+    T: Deref<Target = RemoteProcess> + PtraceRemoteCallExt + Display,
 {
     fn call_remote_jni(&self, env: JNIEnv, fn_offset: usize, args: &[c_long]) -> Result<c_long> {
         let table = self.peek(env as _)? as usize;
@@ -38,8 +38,10 @@ where
         }
 
         // https://cs.android.com/android/platform/superproject/+/android-latest-release:art/runtime/jni/jni_internal.cc;l=2236;drc=c372dbb5668ee2347702050964ce042f3dcd175a
-        let length = self.call_remote_jni(env, jni_fn!(GetStringLength), build_args!(env, str))? as usize;
-        let ptr = self.call_remote_jni(env, jni_fn!(GetStringCritical), build_args!(env, str, 0))? as usize;
+        let length =
+            self.call_remote_jni(env, jni_fn!(GetStringLength), build_args!(env, str))? as usize;
+        let ptr = self.call_remote_jni(env, jni_fn!(GetStringCritical), build_args!(env, str, 0))?
+            as usize;
 
         defer! {
             self.call_remote_jni(env, jni_fn!(ReleaseStringCritical), build_args!(env, str, ptr)).log_if_error();
