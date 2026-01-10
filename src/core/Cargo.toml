@@ -8,7 +8,9 @@ android_logger = { workspace = true }
 anyhow = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
+clap = { workspace = true }
 cpp_demangle = { workspace = true }
+daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
 jni-sys = { workspace = true }

@@ -1,5 +1,5 @@
-use crate::monitor;
 use crate::monitor::{Message, Monitor};
+use crate::{daemon, monitor};
 use anyhow::{Result, bail};
 use app::zygote::ZYGOTE_NAME;
 use app::zygote::ZygoteTracer;
@@ -52,6 +52,7 @@ pub async fn serve() -> Result<()> {
     };
 
     monitor::init_once(config).await?;
+    daemon::notify_launcher_if_needed();
 
     let monitor = Monitor::instance();
 

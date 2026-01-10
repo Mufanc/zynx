@@ -14,8 +14,7 @@ use anyhow::{Context, Result, bail};
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use log::{debug, info, warn};
 use nix::libc::{
-    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE,
-    c_long,
+    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, c_long,
 };
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
