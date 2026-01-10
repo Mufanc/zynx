@@ -2,7 +2,7 @@ use crate::injector::app::SC_CONFIG;
 use crate::injector::app::embryo::EmbryoInjector;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
-use log::info;
+use log::{debug, info};
 use nix::fcntl;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -11,6 +11,7 @@ use once_cell::sync::Lazy;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
 use scopeguard::defer;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tokio::task;
 use zynx_common::ext::ResultExt;
 
@@ -128,9 +129,12 @@ impl ZygoteTracer {
 
         // Todo: timeout check
         task::spawn_blocking(move || {
+            let start = Instant::now();
             EmbryoInjector::new(pid, maps, specialize_fn)
                 .on_fork()
                 .log_if_error();
+            let elapsed = start.elapsed();
+            debug!("embryo {pid} check/injection completed in {elapsed:.2?}");
         });
 
         Ok(())
