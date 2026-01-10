@@ -12,6 +12,12 @@ build-debug:
         --target aarch64-linux-android \
         --config target.aarch64-linux-android.linker=\"{{CC}}\"
 
+build-release:
+    cargo build --package zynx \
+        --target aarch64-linux-android \
+        --config target.aarch64-linux-android.linker=\"{{CC}}\" \
+        --release
+
 run-emulator: build-debug
     adb push target/aarch64-linux-android/debug/zynx /data/local/tmp
     adb shell "chmod +x /data/local/tmp/zynx"

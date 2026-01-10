@@ -8,6 +8,7 @@ use procfs::process::Process;
 
 mod app;
 mod ptrace;
+mod policy;
 
 fn handle_event(event: &Message) -> Result<()> {
     match event {

@@ -209,7 +209,7 @@ impl RemoteProcess {
 
 impl Display for RemoteProcess {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "Tracee({})", self.pid)
+        write!(fmt, "Remote({})", self.pid)
     }
 }
 

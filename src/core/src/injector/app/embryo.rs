@@ -1,9 +1,9 @@
-use crate::build_args;
+use crate::{build_args, jni_fn};
 use crate::injector::app::zygote::{SwbpConfig, ZygoteMaps};
 use crate::injector::app::{API_LEVEL, PAGE_SIZE, ResumeGuard, SC_CONFIG};
 use crate::injector::ptrace::RemoteProcess;
 use crate::injector::ptrace::ext::{
-    PtraceExt, PtraceRemoteCallExt, RemoteLibraryResolver, WaitStatusExt,
+    WaitStatusExt,
 };
 use crate::misc::ext::ResultExt;
 use anyhow::{Context, Result, bail};
@@ -12,11 +12,15 @@ use log::{debug, warn};
 use nix::libc::MADV_DONTNEED;
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
-use nix::unistd::Pid;
+use nix::unistd::{Gid, Pid, Uid};
 use std::ffi::c_long;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::fmt;
+use crate::injector::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
+use crate::injector::ptrace::ext::base::PtraceExt;
+use crate::injector::ptrace::ext::jni::PtraceJniExt;
+use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
 
 #[derive(Debug, Clone)]
 pub struct SpecializeArgs {
@@ -149,7 +153,13 @@ impl EmbryoInjector {
                     self.get_args(&mut args)?;
                     self.restore_swbp()?;
 
-                    let _ = self.check_process(&args);
+                    let args = SpecializeArgs::new(args, *API_LEVEL);
+
+                    debug!("{self} specialize args: {args:?}");
+
+                    if self.check_process(&args)? {
+                        self.do_inject(&args)?;
+                    }
 
                     self.set_regs(&regs)?;
 
@@ -186,15 +196,41 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn check_process(&self, args: &[c_long]) -> Result<bool> {
-        let args = SpecializeArgs::new(args, *API_LEVEL);
+    fn check_process(&self, args: &SpecializeArgs) -> Result<bool> {
+        let fast_args = EmbryoCheckArgs::new_fast(
+            Uid::from_raw(args.uid as _),
+            Gid::from_raw(args.gid as _),
+            args.is_system_server,
+            args.is_child_zygote
+        );
 
-        debug!("{self} specialize args: {args:?}");
+        self.check_process_with_structured_args(args, fast_args)
+    }
+    
+    fn check_process_with_structured_args(&self, specialize_args: &SpecializeArgs, check_args: EmbryoCheckArgs) -> Result<bool> {
+        Ok(match InjectorPolicy::check_embryo(&check_args) {
+            EmbryoCheckResult::Deny => false,
+            EmbryoCheckResult::Allow => true,
+            EmbryoCheckResult::MoreInfo => {
+                if check_args.is_slow() {
+                    warn!("recursive check detected, denying process");
+                    return Ok(false)
+                }
+                
+                let slow_args = check_args.into_slow(
+                    self.read_jstring(specialize_args.env, specialize_args.managed_nice_name)?,
+                    self.read_jstring(specialize_args.env, specialize_args.managed_app_data_dir)?
+                );
 
-        // Todo: quick check with uid/gid
-        // Todo: slow check with se_info/nice_name/app_data_dir
+                self.check_process_with_structured_args(specialize_args, slow_args)?
+            }
+        })
+    }
 
-        Ok(false)
+    fn do_inject(&self, args: &SpecializeArgs) -> Result<()> {
+        // Todo:
+
+        Ok(())
     }
 }
 
