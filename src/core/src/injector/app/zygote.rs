@@ -1,5 +1,6 @@
 use crate::injector::app::embryo::EmbryoInjector;
-use crate::injector::app::{ResumeGuard, SC_CONFIG, SC_SHELLCODE};
+use crate::injector::app::{PAGE_SIZE, ResumeGuard, SC_CONFIG, SC_SHELLCODE};
+use crate::injector::ptrace::RemoteProcess;
 use crate::misc::ext::ResultExt;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
@@ -10,9 +11,6 @@ use once_cell::sync::Lazy;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
 use rustix::path::Arg;
 use std::borrow::Cow;
-use std::ffi::c_int;
-use std::fs::OpenOptions;
-use std::io::{Seek, SeekFrom, Write};
 use std::sync::{Arc, RwLock};
 use tokio::task;
 
@@ -68,41 +66,27 @@ impl ZygoteMaps {
     }
 }
 
-#[derive(Clone)]
-pub struct SwbpConfig(MemoryMap, String);
+#[derive(Debug, Clone)]
+pub struct SwbpConfig {
+    addr: usize,
+    backup: Vec<u8>,
+}
 
 impl SwbpConfig {
-    pub fn new(mmap: MemoryMap) -> Self {
-        if let MMapPath::Path(path) = &mmap.pathname {
-            let path = path.to_string_lossy().into();
-            Self(mmap, path)
-        } else {
-            unreachable!("wtf??")
-        }
+    pub fn new(addr: usize, backup: Vec<u8>) -> Self {
+        Self { addr, backup }
     }
 
     pub fn addr(&self) -> usize {
-        self.0.address.0 as _
+        self.addr
     }
 
-    pub fn length(&self) -> usize {
-        (self.0.address.1 - self.0.address.0) as _
+    pub fn page_addr(&self) -> usize {
+        self.addr & !(*PAGE_SIZE - 1)
     }
 
-    pub fn map_path(&self) -> &str {
-        &self.1
-    }
-
-    pub fn map_prot(&self) -> c_int {
-        (self.0.perms.bits() as c_int) & 0x7
-    }
-
-    pub fn map_flags(&self) -> c_int {
-        (self.0.perms.bits() as c_int) >> 3
-    }
-
-    pub fn map_offset(&self) -> usize {
-        self.0.offset as _
+    pub fn backup(&self) -> &[u8] {
+        &self.backup
     }
 }
 
@@ -140,9 +124,19 @@ impl ZygoteTracer {
 
         info!("SpecializeCommon vma: {sc_vma:?}");
 
+        let swbp = {
+            let remote = RemoteProcess::new(pid);
+            let mut backup = vec![0u8; SC_SHELLCODE.len()];
+
+            remote.peek_data(sc, &mut backup)?;
+            SwbpConfig::new(sc, backup)
+        };
+
+        info!("SpecializeCommon swbp: {swbp:?}");
+
         let mut tracer = ZYGOTE_TRACER.write().expect("lock poisoned");
         tracer.replace(Self {
-            specialize_common: (sc, SwbpConfig::new(sc_vma.clone())),
+            specialize_common: (sc, swbp),
             maps,
         });
 
@@ -157,22 +151,14 @@ impl ZygoteTracer {
     pub fn on_fork(pid: Pid) -> Result<()> {
         let _dontdrop = ResumeGuard::new(pid);
 
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(format!("/proc/{pid}/mem"))?;
-
         let lock = ZYGOTE_TRACER.read().expect("lock poisoned");
         let tracer = lock.as_ref().context("zygote tracer not initialized")?;
 
-        let (address, _) = tracer.specialize_common;
+        let (addr, _) = tracer.specialize_common;
 
         drop(lock);
 
-        file.seek(SeekFrom::Start(address as _))?;
-        file.write_all(&SC_SHELLCODE)?;
-        file.flush()?;
-
-        drop(file);
+        RemoteProcess::new(pid).poke_data_ignore_perm(addr, &SC_SHELLCODE)?;
 
         Ok(())
     }

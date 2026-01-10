@@ -1,6 +1,5 @@
 pub mod ext;
 
-use crate::misc::ext::ResultExt;
 use anyhow::{Context, Result, bail};
 use log::{debug, trace};
 use nix::errno::Errno;
@@ -15,7 +14,8 @@ use procfs::ProcError;
 use procfs::process::{ProcState, Process};
 use std::ffi::{c_long, c_void};
 use std::fmt::{Display, Formatter};
-use std::io::{IoSlice, IoSliceMut};
+use std::fs::OpenOptions;
+use std::io::{IoSlice, IoSliceMut, Seek, SeekFrom, Write};
 use std::mem::MaybeUninit;
 use std::time::Duration;
 use std::{fmt, thread};
@@ -86,11 +86,11 @@ impl RegSet {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #[derive(Debug)]
-pub struct Tracee {
+pub struct RemoteProcess {
     pid: Pid,
 }
 
-impl Tracee {
+impl RemoteProcess {
     pub fn new(pid: Pid) -> Self {
         Self {
             pid: Pid::from_raw(pid.as_raw()),
@@ -158,6 +158,18 @@ impl Tracee {
         Ok(())
     }
 
+    pub fn poke_data_ignore_perm(&self, addr: usize, data: &[u8]) -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .open(format!("/proc/{}/mem", self.pid))?;
+
+        file.seek(SeekFrom::Start(addr as _))?;
+        file.write_all(data)?;
+        file.flush()?;
+
+        Ok(())
+    }
+
     pub fn get_regs(&self) -> Result<RegSet> {
         let mut regs: MaybeUninit<user_regs_struct> = MaybeUninit::uninit();
         let iov = iovec {
@@ -188,19 +200,16 @@ impl Tracee {
 
         Ok(())
     }
-}
 
-impl Display for Tracee {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "Tracee({})", self.pid)
+    pub fn detach<T: Into<Option<Signal>>>(&self, sig: T) -> Result<()> {
+        ptrace::detach(self.pid, sig)?;
+        Ok(())
     }
 }
 
-impl Drop for Tracee {
-    fn drop(&mut self) {
-        if ptrace::detach(self.pid, None).ok_or_warn().is_some() {
-            debug!("detached from: {self}")
-        }
+impl Display for RemoteProcess {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        write!(fmt, "Tracee({})", self.pid)
     }
 }
 

@@ -1,7 +1,9 @@
 use crate::binary::library::SystemLibraryResolver;
-use crate::injector::ptrace::{RegSet, Tracee};
+use crate::injector::ptrace::RemoteProcess;
 use crate::misc::ext::ResultExt;
 use anyhow::{Result, bail};
+use log::debug;
+use nix::errno::Errno;
 use nix::libc::{AT_FDCWD, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA, PR_SET_VMA_ANON_NAME};
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
@@ -44,7 +46,7 @@ pub trait PtraceExt {
     fn get_args(&self, args: &mut [c_long]) -> Result<()>;
 }
 
-impl PtraceExt for Tracee {
+impl PtraceExt for RemoteProcess {
     fn get_arg(&self, index: usize) -> Result<c_long> {
         let regs = self.get_regs()?;
         let arg = if index < 8 {
@@ -114,16 +116,19 @@ pub trait RemoteLibraryResolver {
 pub trait PtraceRemoteCallExt {
     fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long>;
     fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long>;
+    fn errno(&self) -> Result<Errno>;
 }
 
 impl<T> PtraceRemoteCallExt for T
 where
-    T: Deref<Target = Tracee> + RemoteLibraryResolver + Display,
+    T: Deref<Target = RemoteProcess> + RemoteLibraryResolver + Display,
 {
     fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long> {
         if args.len() > 8 {
             bail!("{self} too many args: {} > 8", args.len());
         }
+
+        debug!("call remote: {func:0>12x} {args:?}");
 
         let regs_backup = self.get_regs()?;
 
@@ -177,6 +182,9 @@ where
             }
             RemoteFn::LibrarySymbol(library, symbol) => {
                 let resolver = SystemLibraryResolver::instance();
+
+                debug!("offset = {}", resolver.resolve(library, symbol)?.addr);
+
                 self.call_remote(
                     self.find_library_base(library)? + resolver.resolve(library, symbol)?.addr,
                     args,
@@ -184,6 +192,13 @@ where
             }
             RemoteFn::Absolute(func) => self.call_remote(func, args),
         }
+    }
+
+    fn errno(&self) -> Result<Errno> {
+        let ptr = self.call_remote_auto(("libc", "__errno"), &[])?;
+        let errno = self.peek(ptr as _)? & 0xffffffff;
+
+        Ok(Errno::from_raw(errno as _))
     }
 }
 
@@ -267,7 +282,7 @@ pub trait PtraceIpcExt {
 
 impl<T> PtraceIpcExt for T
 where
-    T: Deref<Target = Tracee> + PtraceRemoteCallExt + Display,
+    T: Deref<Target = RemoteProcess> + PtraceRemoteCallExt + Display,
 {
     fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd> {
         let path = CString::new(path.as_ref().to_string_lossy().as_bytes())?;

@@ -1,3 +1,4 @@
+use crate::android::sysprop;
 use crate::binary::cpp::ArgCounter;
 use crate::binary::symbol::{Section, Symbol, SymbolResolver};
 use crate::misc::ext::ResultExt;
@@ -6,13 +7,23 @@ use dynasmrt::dynasm;
 use log::info;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
-use nix::unistd::Pid;
+use nix::unistd::{Pid, SysconfVar};
+use nix::unistd;
 use once_cell::sync::Lazy;
 use regex_lite::Regex;
 use scopeguard::ScopeGuard;
 
 mod embryo;
 pub mod zygote;
+
+pub static API_LEVEL: Lazy<i32> = Lazy::new(|| {
+    sysprop::get("ro.build.version.sdk")
+        .parse()
+        .expect("failed to parse api level")
+});
+
+pub static PAGE_SIZE: Lazy<usize> =
+    Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);
 
 pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 
@@ -55,9 +66,14 @@ pub static SC_SHELLCODE: Lazy<Vec<u8>> = Lazy::new(|| {
         ; brk 0x0
     );
 
-    ops.finalize()
+    let vec = ops
+        .finalize()
         .expect("failed to finalize shellcode")
-        .to_vec()
+        .to_vec();
+
+    assert_eq!(vec.len(), 4);
+
+    vec
 });
 
 pub struct ResumeGuard {

@@ -469,7 +469,7 @@ pub fn tracepoint__sched__sched_process_exit(ctx: TracePointContext) -> u32 {
         }
 
         if ZYGOTE_INFO.get(0) == Some(&pid) {
-            info!(&ctx, "zygote crashed: {}", pid);
+            warn!(&ctx, "zygote crashed: {}", pid);
 
             if !emit(Message::ZygoteCrashed(pid)) {
                 warn!(&ctx, "failed to emit zygote crash message");

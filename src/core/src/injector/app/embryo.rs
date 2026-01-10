@@ -1,29 +1,22 @@
-use crate::android::sysprop;
 use crate::build_args;
 use crate::injector::app::zygote::{SwbpConfig, ZygoteMaps};
-use crate::injector::app::{ResumeGuard, SC_CONFIG};
-use crate::injector::ptrace::Tracee;
+use crate::injector::app::{API_LEVEL, PAGE_SIZE, ResumeGuard, SC_CONFIG};
+use crate::injector::ptrace::RemoteProcess;
 use crate::injector::ptrace::ext::{
-    MmapOptions, PtraceExt, PtraceIpcExt, PtraceRemoteCallExt, RemoteLibraryResolver, WaitStatusExt,
+    PtraceExt, PtraceRemoteCallExt, RemoteLibraryResolver, WaitStatusExt,
 };
-use anyhow::{Context, Result};
+use crate::misc::ext::ResultExt;
+use anyhow::{Context, Result, bail};
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use log::{debug, warn};
-use nix::libc::{MAP_FIXED, O_RDONLY, PROT_READ, PROT_WRITE};
+use nix::libc::MADV_DONTNEED;
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
 use nix::unistd::Pid;
-use once_cell::sync::Lazy;
 use std::ffi::c_long;
-use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-
-static API_LEVEL: Lazy<i32> = Lazy::new(|| {
-    sysprop::get("ro.build.version.sdk")
-        .parse()
-        .expect("failed to parse api level")
-});
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct SpecializeArgs {
@@ -106,7 +99,7 @@ impl SpecializeArgs {
 
 pub struct EmbryoInjector {
     pid: Pid,
-    tracee: Tracee,
+    tracee: RemoteProcess,
     maps: ZygoteMaps,
     swbp: SwbpConfig,
 }
@@ -123,7 +116,7 @@ impl EmbryoInjector {
     pub fn new(pid: Pid, maps: ZygoteMaps, swbp: SwbpConfig) -> Self {
         Self {
             pid,
-            tracee: Tracee::new(pid),
+            tracee: RemoteProcess::new(pid),
             maps,
             swbp,
         }
@@ -137,6 +130,8 @@ impl EmbryoInjector {
 
         loop {
             let status = self.wait()?;
+
+            debug!("{self} status = {status:?}");
 
             match status {
                 WaitStatus::Exited(_, code) => {
@@ -172,22 +167,21 @@ impl EmbryoInjector {
     fn restore_swbp(&self) -> Result<()> {
         let swbp = &self.swbp;
 
+        debug!("{self} restore swbp: {swbp:?}");
+
+        // note: no writeback is required because MADV_DONTNEED immediately unmaps the memory,
+        // subsequent accesses to this region will trigger page faults and reload data from the file.
+        // self.poke_data_ignore_perm(swbp.addr(), swbp.backup())?;
+
         #[rustfmt::skip]
-        self.call_remote_auto(
-            ("libc", "mprotect"),
-            build_args!(swbp.addr(), swbp.length(), PROT_READ | PROT_WRITE),
+        let result = self.call_remote_auto(
+            ("libc", "madvise"),
+            build_args!(swbp.page_addr(), *PAGE_SIZE, MADV_DONTNEED)
         )?;
 
-        let fd = self.open(swbp.addr(), swbp.map_path(), O_RDONLY)?;
-
-        self.mmap_ex(
-            MmapOptions::new(swbp.length(), swbp.map_prot(), swbp.map_flags() | MAP_FIXED)
-                .addr(swbp.addr())
-                .fd(&fd)
-                .offset(swbp.map_offset()),
-        )?;
-
-        fd.close(self)?;
+        if result == -1 {
+            bail!("failed to restore swbp");
+        }
 
         Ok(())
     }
@@ -205,10 +199,18 @@ impl EmbryoInjector {
 }
 
 impl Deref for EmbryoInjector {
-    type Target = Tracee;
+    type Target = RemoteProcess;
 
     fn deref(&self) -> &Self::Target {
         &self.tracee
+    }
+}
+
+impl Drop for EmbryoInjector {
+    fn drop(&mut self) {
+        if self.tracee.detach(None).ok_or_warn().is_some() {
+            debug!("detached from: {}", self.tracee)
+        }
     }
 }
 

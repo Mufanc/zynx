@@ -65,7 +65,11 @@ impl SymbolResolver<'_> {
             .filter_map(|sym| {
                 sym.name()
                     .ok()
-                    .filter(|name| pattern.is_match(name))
+                    .filter(|name| {
+                        pattern
+                            .find(name)
+                            .map_or(false, |m| m.start() == 0 && m.end() == name.len())
+                    })
                     .and_then(|name| {
                         sym.section_index().map(|index| Symbol {
                             name: name.into(),
