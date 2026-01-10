@@ -4,13 +4,8 @@ use crate::binary::symbol::{Section, Symbol, SymbolResolver};
 use anyhow::Result;
 use dynasmrt::dynasm;
 use log::info;
-use nix::sys::signal;
-use nix::sys::signal::Signal;
-use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use regex_lite::Regex;
-use scopeguard::ScopeGuard;
-use zynx_common::ext::ResultExt;
 
 mod embryo;
 pub mod zygote;
@@ -23,6 +18,7 @@ pub static API_LEVEL: Lazy<i32> = Lazy::new(|| {
 
 pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 
+#[allow(unused)]
 #[derive(Debug)]
 pub struct SpecializeCommonConfig {
     pub lib: &'static str,
@@ -71,17 +67,3 @@ pub static SC_SHELLCODE: Lazy<Vec<u8>> = Lazy::new(|| {
 
     vec
 });
-
-pub struct ResumeGuard {
-    _dontdrop: ScopeGuard<Pid, fn(Pid)>,
-}
-
-impl ResumeGuard {
-    pub fn new(pid: Pid) -> Self {
-        Self {
-            _dontdrop: ScopeGuard::with_strategy(pid, |pid| {
-                signal::kill(pid, Signal::SIGCONT).ok_or_warn();
-            }),
-        }
-    }
-}

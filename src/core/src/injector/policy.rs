@@ -2,6 +2,7 @@ use log::{debug, warn};
 use nix::unistd::{Gid, Uid};
 use std::ops::Deref;
 
+#[allow(unused)]
 pub struct EmbryoCheckArgsFast {
     pub uid: Uid,
     pub gid: Gid,
@@ -9,6 +10,7 @@ pub struct EmbryoCheckArgsFast {
     pub is_child_zygote: bool,
 }
 
+#[allow(unused)]
 pub struct EmbryoCheckArgsSlow {
     fast_args: EmbryoCheckArgsFast,
     pub nice_name: Option<String>,

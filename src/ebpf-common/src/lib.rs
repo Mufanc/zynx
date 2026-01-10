@@ -6,5 +6,4 @@ pub enum Message {
     NameMatches(i32, [u8; 16]),
     ZygoteFork(i32),
     ZygoteCrashed(i32),
-    EmbryoSpecialize(i32),
 }

@@ -18,7 +18,6 @@ const FIRST_APP_UID: u64 = 10000;
 const SIGSTOP: u32 = 19;
 const SIGCONT: u32 = 18;
 const SIGTRAP: u32 = 5;
-const TRAP_BRKPT: i32 = 1;
 
 #[map]
 static mut TARGET_PATHS: HashMap<[u8; 128], u8> = HashMap::with_max_entries(0x100, 0);
@@ -55,7 +54,6 @@ impl From<ServiceState> for u8 {
 #[derive(Copy, Clone)]
 enum EmbryoState {
     PreFork,
-    PostFork,
 }
 
 impl From<EmbryoState> for u8 {
@@ -376,9 +374,7 @@ pub fn tracepoint__raw_syscalls__sys_enter(ctx: TracePointContext) -> u32 {
 
     unsafe {
         if hashmap_load(&ZYGOTE_CHILDREN, &pid) == Some(&EmbryoState::PreFork.into()) {
-            if !hashmap_change(&mut ZYGOTE_CHILDREN, &pid, &EmbryoState::PostFork.into()) {
-                warn!(&ctx, "failed to mark zygote child: {}", pid)
-            }
+            hashmap_remove(&mut ZYGOTE_CHILDREN, &pid);
 
             if DEBUG {
                 debug!(&ctx, "post zygote fork: {}", pid)
@@ -407,6 +403,10 @@ struct SignalDeliverEvent {
 
 #[tracepoint]
 pub fn tracepoint__signal__signal_deliver(ctx: TracePointContext) -> u32 {
+    if !DEBUG {
+        return 0;
+    }
+
     let event = SignalDeliverEvent::from_context(&ctx);
     let sig = event.sig as u32;
 
@@ -420,29 +420,10 @@ pub fn tracepoint__signal__signal_deliver(ctx: TracePointContext) -> u32 {
 
     let pid = current_pid();
 
-    if DEBUG {
-        debug!(
-            &ctx,
-            "signal deliver to process {}: sig={}, code={}", pid, event.sig, event.code
-        );
-    }
-
-    if sig == SIGTRAP && event.code == TRAP_BRKPT {
-        unsafe {
-            if let Some(state) = hashmap_load(&ZYGOTE_CHILDREN, &pid)
-                && *state == EmbryoState::PostFork.into()
-            {
-                hashmap_remove(&mut ZYGOTE_CHILDREN, &pid);
-
-                sigstop();
-
-                if !emit(Message::EmbryoSpecialize(pid)) {
-                    warn!(&ctx, "failed to emit embryo specialize message");
-                    sigcont();
-                }
-            }
-        }
-    }
+    debug!(
+        &ctx,
+        "signal deliver to process {}: sig={}, code={}", pid, event.sig, event.code
+    );
 
     0
 }

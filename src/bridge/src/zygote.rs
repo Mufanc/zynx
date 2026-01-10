@@ -1,11 +1,11 @@
+use crate::init_logger;
 use log::{error, info};
+use nix::libc::c_long;
 use nix::sys::mman;
+use nix::unistd;
 use std::arch::naked_asm;
 use std::ptr::NonNull;
-use nix::libc::c_long;
-use nix::unistd;
 use zynx_bridge_common::EmbryoTrampolineArgs;
-use crate::init_logger;
 /*
  *            AArch64 Calling Convention
  *
@@ -97,7 +97,11 @@ fn handle_specialize_common(args: &EmbryoTrampolineArgs) -> anyhow::Result<()> {
 
     let hook = &args.specialize_hook;
     unsafe {
-        specialize_common(hook.specialize_fn, hook.specialize_args_count, hook.specialize_args.as_ptr());
+        specialize_common(
+            hook.specialize_fn,
+            hook.specialize_args_count,
+            hook.specialize_args.as_ptr(),
+        );
     }
 
     info!("post specialize, uid = {}", unistd::getuid());

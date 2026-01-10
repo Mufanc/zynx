@@ -5,7 +5,7 @@ use anyhow::Result;
 use anyhow::bail;
 use log::warn;
 use nix::libc::{
-    AF_UNIX, AT_FDCWD, CMSG_DATA, CMSG_FIRSTHDR, CMSG_SPACE, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA,
+    AF_UNIX, CMSG_DATA, CMSG_FIRSTHDR, CMSG_SPACE, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA,
     PR_SET_VMA_ANON_NAME, SOCK_SEQPACKET, c_int, msghdr,
 };
 use nix::sys::socket;
@@ -14,7 +14,6 @@ use std::ffi::CString;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
-use std::path::Path;
 use std::{mem, ptr, slice};
 use syscalls::{Sysno, syscall};
 
@@ -64,6 +63,7 @@ pub struct MmapOptions<'a> {
     name: Option<&'a str>,
 }
 
+#[allow(unused)]
 impl<'a> MmapOptions<'a> {
     pub fn new(size: usize, prot: c_int, flags: c_int) -> Self {
         Self {
@@ -118,8 +118,6 @@ impl SocketConnection {
 }
 
 pub trait PtraceIpcExt {
-    fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd>;
-
     fn mmap(
         &self,
         addr: usize,
@@ -148,24 +146,6 @@ impl<T> PtraceIpcExt for T
 where
     T: Deref<Target = RemoteProcess> + PtraceRemoteCallExt + Display,
 {
-    fn open<P: AsRef<Path>>(&self, buffer_addr: usize, path: P, flags: c_int) -> Result<RemoteFd> {
-        let path = CString::new(path.as_ref().to_string_lossy().as_bytes())?;
-
-        self.poke_data(buffer_addr, path.as_bytes_with_nul())?;
-
-        #[rustfmt::skip]
-        let fd = self.call_remote_auto(
-            ("libc", "__openat"),
-            build_args!(AT_FDCWD, buffer_addr, flags)
-        )? as RawFd;
-
-        if fd < 0 {
-            bail!("{self} failed to open {path:?}");
-        }
-
-        Ok(RemoteFd::new(fd))
-    }
-
     fn mmap(
         &self,
         addr: usize,

@@ -2,6 +2,7 @@ use crate::injector::ptrace::RemoteProcess;
 use anyhow::Result;
 use nix::libc::c_long;
 
+#[allow(unused)]
 pub trait PtraceExt {
     fn get_arg(&self, index: usize) -> Result<c_long>;
     fn get_args(&self, args: &mut [c_long]) -> Result<()>;

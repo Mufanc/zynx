@@ -42,7 +42,6 @@ fn handle_event(event: &Message) -> Result<()> {
         }
         Message::ZygoteFork(pid) => ZygoteTracer::on_fork(*pid),
         Message::ZygoteCrashed(_pid) => ZygoteTracer::reset(),
-        Message::EmbryoSpecialize(pid) => ZygoteTracer::on_specialize(*pid),
     }
 }
 

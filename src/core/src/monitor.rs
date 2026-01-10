@@ -4,13 +4,13 @@ use aya::programs::TracePoint;
 use aya::{Ebpf, include_bytes_aligned};
 use aya_log::EbpfLogger;
 use log::{error, info, warn};
+use nix::libc::RLIM_INFINITY;
+use nix::sys::resource;
+use nix::sys::resource::Resource;
 use nix::unistd::Pid;
 use std::ffi::CStr;
 use std::mem;
 use std::sync::{Arc, Mutex, OnceLock};
-use nix::libc::RLIM_INFINITY;
-use nix::sys::resource;
-use nix::sys::resource::Resource;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex as AsyncMutex;
@@ -36,7 +36,6 @@ pub enum Message {
     NameMatches(Pid, String),
     ZygoteFork(Pid),
     ZygoteCrashed(Pid),
-    EmbryoSpecialize(Pid),
 }
 
 fn parse_string(data: &[u8]) -> String {
@@ -55,7 +54,6 @@ impl From<EbpfMessage> for Message {
             }
             EbpfMessage::ZygoteFork(pid) => Message::ZygoteFork(Pid::from_raw(pid)),
             EbpfMessage::ZygoteCrashed(pid) => Message::ZygoteCrashed(Pid::from_raw(pid)),
-            EbpfMessage::EmbryoSpecialize(pid) => Message::EmbryoSpecialize(Pid::from_raw(pid)),
         }
     }
 }

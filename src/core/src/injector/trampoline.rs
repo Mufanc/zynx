@@ -1,5 +1,4 @@
 use crate::binary::symbol::CachedFirstResolver;
-use crate::injector::PAGE_SIZE;
 use anyhow::{Context, Result};
 use memfd::{FileSeal, Memfd, MemfdOptions};
 use once_cell::sync::Lazy;

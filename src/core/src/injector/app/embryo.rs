@@ -1,31 +1,34 @@
-use crate::injector::app::zygote::{SwbpConfig, ZygoteMaps};
-use crate::injector::app::{API_LEVEL, ResumeGuard, SC_CONFIG};
+use crate::build_args;
+use crate::injector::app::zygote::ZygoteMaps;
+use crate::injector::app::{API_LEVEL, SC_CONFIG, SC_SHELLCODE};
 use crate::injector::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
-use crate::injector::ptrace::{RegSet, RemoteProcess};
 use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
 use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
 use crate::injector::ptrace::ext::jni::PtraceJniExt;
 use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
+use crate::injector::ptrace::{RegSet, RemoteProcess};
 use crate::injector::trampoline::Bridge;
 use crate::injector::{PAGE_SIZE, misc};
-use crate::build_args;
 use anyhow::{Context, Result, bail};
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
-use log::{debug, warn};
+use log::{debug, info, warn};
 use nix::libc::{
-    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, c_long,
+    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE,
+    c_long,
 };
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
+use once_cell::sync::Lazy;
 use scopeguard::defer;
-use std::{fmt, slice};
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd};
-use once_cell::sync::Lazy;
-use zynx_bridge_common::{EmbryoTrampolineArgs, EmbryoTrampolineFnPtrs, MemoryRegion, SpecializeHookInfo};
+use std::{fmt, slice};
+use zynx_bridge_common::{
+    EmbryoTrampolineArgs, EmbryoTrampolineFnPtrs, MemoryRegion, SpecializeHookInfo,
+};
 use zynx_common::ext::ResultExt;
 
 static BUFFER_SIZE: Lazy<usize> = Lazy::new(|| {
@@ -34,6 +37,7 @@ static BUFFER_SIZE: Lazy<usize> = Lazy::new(|| {
     buffer_size
 });
 
+#[allow(unused)]
 #[derive(Debug, Clone)]
 pub struct SpecializeArgs {
     pub env: JNIEnv,
@@ -64,6 +68,8 @@ impl SpecializeArgs {
     #[allow(unused_mut)]
     #[allow(unused_variables)]
     pub fn new<T: AsRef<[c_long]>>(args: &T, api_level: i32) -> Self {
+        // Fixme: check function signature instead of api level
+
         let args = args.as_ref().as_ptr();
         let mut index = 0;
 
@@ -114,10 +120,9 @@ impl SpecializeArgs {
 }
 
 pub struct EmbryoInjector {
-    pid: Pid,
     tracee: RemoteProcess,
     maps: ZygoteMaps,
-    swbp: SwbpConfig,
+    specialize_fn: usize,
 }
 
 impl RemoteLibraryResolver for EmbryoInjector {
@@ -129,17 +134,17 @@ impl RemoteLibraryResolver for EmbryoInjector {
 }
 
 impl EmbryoInjector {
-    pub fn new(pid: Pid, maps: ZygoteMaps, swbp: SwbpConfig) -> Self {
+    pub fn new(pid: Pid, maps: ZygoteMaps, specialize_fn: usize) -> Self {
         Self {
-            pid,
             tracee: RemoteProcess::new(pid),
             maps,
-            swbp,
+            specialize_fn,
         }
     }
 
-    pub fn on_specialize(&self) -> Result<()> {
-        let _dontdrop = ResumeGuard::new(self.pid);
+    pub fn on_fork(&self) -> Result<()> {
+        // install swbp
+        self.poke_data_ignore_perm(self.specialize_fn, &SC_SHELLCODE)?;
 
         self.seize()?;
         self.kill(Signal::SIGCONT)?;
@@ -191,9 +196,7 @@ impl EmbryoInjector {
     }
 
     fn restore_swbp(&self) -> Result<()> {
-        let swbp = &self.swbp;
-
-        debug!("{self} restore swbp: {swbp:?}");
+        debug!("{self} restore swbp: {}", self.specialize_fn);
 
         // note: no writeback is required because MADV_DONTNEED immediately unmaps the memory,
         // subsequent accesses to this region will trigger page faults and reload data from the file.
@@ -202,7 +205,7 @@ impl EmbryoInjector {
         #[rustfmt::skip]
         let result = self.call_remote_auto(
             ("libc", "madvise"),
-            build_args!(misc::floor_to_page_size(swbp.addr()), *PAGE_SIZE, MADV_DONTNEED)
+            build_args!(misc::floor_to_page_size(self.specialize_fn), *PAGE_SIZE, MADV_DONTNEED)
         )?;
 
         if result == -1 {
@@ -248,6 +251,8 @@ impl EmbryoInjector {
     }
 
     fn do_inject(&self, regs: &RegSet, raw_args: &[c_long]) -> Result<()> {
+        info!("injecting process: {self}, raw_args = {raw_args:?}");
+
         let buffer_addr = self.mmap_ex(
             MmapOptions::new(
                 *BUFFER_SIZE,
@@ -266,7 +271,8 @@ impl EmbryoInjector {
         let bridge_fd_num = bridge_fd.as_raw_fd();
 
         let trampoline_addr = self.mmap_ex(
-            MmapOptions::new(bridge.trampoline_size(), PROT_READ | PROT_EXEC, MAP_PRIVATE).fd(&bridge_fd),
+            MmapOptions::new(bridge.trampoline_size(), PROT_READ | PROT_EXEC, MAP_PRIVATE)
+                .fd(&bridge_fd),
         )?;
 
         bridge_fd.forget();
@@ -277,7 +283,7 @@ impl EmbryoInjector {
             bridge_library_fd: bridge_fd_num,
             fn_ptrs: EmbryoTrampolineFnPtrs {
                 dlopen: self.resolve_fn(("libdl", "android_dlopen_ext"))?,
-                dlsym: self.resolve_fn(("libdl", "dlsym"))?
+                dlsym: self.resolve_fn(("libdl", "dlsym"))?,
             },
             trampoline_region: MemoryRegion {
                 base: trampoline_addr,
@@ -288,7 +294,7 @@ impl EmbryoInjector {
                 size: misc::ceil_to_page_size(*BUFFER_SIZE),
             },
             specialize_hook: SpecializeHookInfo {
-                specialize_fn: self.swbp.addr(),
+                specialize_fn: self.specialize_fn,
                 specialize_args: {
                     let mut args = [0; _];
                     args[..raw_args.len()].copy_from_slice(raw_args);
@@ -302,9 +308,8 @@ impl EmbryoInjector {
             },
         };
 
-        let args_slice = unsafe {
-            slice::from_raw_parts(&args as *const _ as *const u8, size_of_val(&args))
-        };
+        let args_slice =
+            unsafe { slice::from_raw_parts(&args as *const _ as *const u8, size_of_val(&args)) };
 
         self.poke_data(buffer_addr, args_slice)?;
         self.call_remote_auto_nowait(
@@ -312,6 +317,8 @@ impl EmbryoInjector {
             0, /* embryo will never return from this call */
             build_args!(buffer_addr),
         )?;
+
+        // Todo: serve for module fds
 
         Ok(())
     }

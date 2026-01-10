@@ -24,6 +24,7 @@ use std::{fmt, thread};
 #[derive(Clone)]
 pub struct RegSet(user_regs_struct);
 
+#[allow(unused)]
 impl RegSet {
     const SIZE: usize = size_of::<user_regs_struct>();
 
@@ -106,6 +107,7 @@ pub struct RemoteProcess {
     attached: AtomicBool,
 }
 
+#[allow(unused)]
 impl RemoteProcess {
     pub fn new(pid: Pid) -> Self {
         Self {
