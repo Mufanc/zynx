@@ -1,7 +1,5 @@
 use log::LevelFilter;
 
-mod dlfcn;
-mod trampoline;
 mod zygote;
 
 fn init_logger() {

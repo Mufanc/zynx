@@ -2,7 +2,6 @@ use crate::android::properties;
 use crate::binary::cpp::ArgCounter;
 use crate::binary::symbol::{Section, Symbol, SymbolResolver};
 use anyhow::Result;
-use dynasmrt::dynasm;
 use log::info;
 use once_cell::sync::Lazy;
 use regex_lite::Regex;
@@ -27,6 +26,7 @@ pub struct SpecializeCommonConfig {
     pub args_cnt: usize,
 }
 
+// Todo: resolve specific symbol
 impl SpecializeCommonConfig {
     fn resolve() -> Result<Self> {
         let resolver = SymbolResolver::from_file(SC_LIBRARY_PATH)?;
@@ -50,20 +50,4 @@ pub static SC_CONFIG: Lazy<SpecializeCommonConfig> = Lazy::new(|| {
     config
 });
 
-pub static SC_SHELLCODE: Lazy<Vec<u8>> = Lazy::new(|| {
-    let mut ops = dynasmrt::aarch64::Assembler::new().expect("failed to create assembler");
-
-    dynasm!(ops
-        ; .arch aarch64
-        ; brk 0x0
-    );
-
-    let vec = ops
-        .finalize()
-        .expect("failed to finalize shellcode")
-        .to_vec();
-
-    assert_eq!(vec.len(), 4);
-
-    vec
-});
+pub static SC_BRK: [u8; 4] = [0x00, 0x00, 0x20, 0xd4]; // brk #0

@@ -10,6 +10,7 @@ use once_cell::sync::Lazy;
 use procfs::process::Process;
 
 mod app;
+mod asm;
 mod misc;
 mod policy;
 mod ptrace;

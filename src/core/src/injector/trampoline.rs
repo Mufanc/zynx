@@ -1,5 +1,4 @@
-use crate::binary::symbol::CachedFirstResolver;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use memfd::{FileSeal, Memfd, MemfdOptions};
 use once_cell::sync::Lazy;
 use std::io::{Seek, SeekFrom, Write};
@@ -15,15 +14,12 @@ static DATA: &[u8] = include_bytes!(concat!(
 static INSTANCE: Lazy<Bridge> =
     Lazy::new(|| Bridge::new(DATA).expect("failed to load zynx bridge"));
 
-pub struct Bridge<'a> {
-    size: usize,
+pub struct Bridge {
     fd: Memfd,
-    resolver: CachedFirstResolver<'a>,
 }
 
-impl Bridge<'_> {
+impl Bridge {
     fn new(data: &[u8]) -> Result<Self> {
-        let resolver = CachedFirstResolver::from_data(data.to_vec())?;
         let fd = MemfdOptions::default()
             .allow_sealing(true)
             .create("zynx::bridge")?;
@@ -41,25 +37,7 @@ impl Bridge<'_> {
             FileSeal::SealSeal,
         ])?;
 
-        Ok(Self {
-            size: data.len(),
-            fd,
-            resolver,
-        })
-    }
-
-    pub fn trampoline_size(&self) -> usize {
-        self.size
-    }
-
-    pub fn resolve(&self, name: &str) -> Result<usize> {
-        let sym = self.resolver.resolve(name)?;
-        let sec = self.resolver.inner().find_section(sym.section_index)?;
-
-        Ok(sym.addr - sec.addr
-            + sec
-                .file_offset
-                .context(format!("section {} has no file offset", sec.name))?)
+        Ok(Self { fd })
     }
 
     pub fn instance() -> &'static Self {
@@ -67,7 +45,7 @@ impl Bridge<'_> {
     }
 }
 
-impl AsFd for Bridge<'_> {
+impl AsFd for Bridge {
     fn as_fd(&self) -> BorrowedFd<'_> {
         self.fd.as_file().as_fd()
     }

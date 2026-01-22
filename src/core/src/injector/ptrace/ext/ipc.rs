@@ -1,6 +1,6 @@
-use crate::build_args;
 use crate::injector::ptrace::RemoteProcess;
 use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
+use crate::{build_args, misc};
 use anyhow::Result;
 use anyhow::bail;
 use log::warn;
@@ -228,9 +228,6 @@ where
         };
 
         let header_addr = (buffer_addr + buffer_len + 0xf) & !0xf; // align to 16 bytes
-        let header_slice = unsafe {
-            slice::from_raw_parts(&header as *const _ as *const u8, size_of_val(&header))
-        };
 
         socket::sendmsg::<()>(
             conn.local_fd.as_raw_fd(),
@@ -240,7 +237,7 @@ where
             None,
         )?;
 
-        self.poke_data(header_addr, header_slice)?;
+        self.poke_data(header_addr, misc::as_byte_slice(&header))?;
 
         #[rustfmt::skip]
         self.call_remote_auto(

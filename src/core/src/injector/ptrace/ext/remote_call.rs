@@ -97,6 +97,8 @@ where
         let mut status = self.wait()?;
 
         loop {
+            trace!("status = {status:?}");
+
             match status {
                 WaitStatus::Stopped(_, Signal::SIGSEGV) => break,
                 WaitStatus::Stopped(_, Signal::SIGCHLD) => {}

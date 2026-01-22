@@ -132,7 +132,7 @@ impl ZygoteTracer {
             let task_handle = task::spawn_blocking(move || {
                 let start = Instant::now();
                 EmbryoInjector::new(pid, maps, specialize_fn)
-                    .on_fork()
+                    .start()
                     .log_if_error();
                 let elapsed = start.elapsed();
                 debug!("embryo {pid} check/injection completed in {elapsed:.2?}");

@@ -1,6 +1,6 @@
-use crate::build_args;
 use crate::injector::ptrace::RemoteProcess;
 use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
+use crate::{build_args, misc};
 use anyhow::Result;
 use jni_sys::{JNIEnv, jchar, jstring};
 use nix::libc::c_long;
@@ -48,12 +48,8 @@ where
         }
 
         let mut buffer: Vec<jchar> = vec![0; length];
-        let buffer_slice = unsafe {
-            let slice = buffer.as_mut_slice();
-            std::slice::from_raw_parts_mut(slice as *mut _ as *mut u8, size_of_val(slice))
-        };
 
-        self.peek_data(ptr, buffer_slice)?;
+        self.peek_data(ptr, misc::as_byte_slice_mut(buffer.as_mut_slice()))?;
 
         Ok(Some(String::from_utf16_lossy(&buffer)))
     }
