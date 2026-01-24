@@ -1,4 +1,3 @@
-mod android;
 mod binary;
 mod cli;
 mod daemon;

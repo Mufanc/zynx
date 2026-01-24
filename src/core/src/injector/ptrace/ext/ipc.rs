@@ -14,7 +14,7 @@ use std::ffi::CString;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd, RawFd};
-use std::{mem, ptr, slice};
+use std::{mem, ptr};
 use syscalls::{Sysno, syscall};
 
 #[derive(Debug)]

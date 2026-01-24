@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use object::{Object, ObjectSection, ObjectSymbol, SectionIndex};
 use once_map::OnceMap;
-use regex_lite::Regex;
 use std::fmt::Debug;
 use std::fs;
 use std::marker::PhantomPinned;
@@ -56,20 +55,16 @@ impl SymbolResolver<'_> {
         unsafe { self.file.assume_init_ref() }
     }
 
-    pub fn find_symbol(&self, pattern: &Regex) -> Vec<Symbol> {
+    pub fn find_symbol(&self, target: &str) -> Option<Symbol> {
         let file = self.file();
 
-        let mut symbols: Vec<_> = file
+        let result: Option<_> = file
             .dynamic_symbols()
             .chain(file.symbols())
-            .filter_map(|sym| {
+            .find_map(|sym| {
                 sym.name()
                     .ok()
-                    .filter(|name| {
-                        pattern
-                            .find(name)
-                            .map_or(false, |m| m.start() == 0 && m.end() == name.len())
-                    })
+                    .filter(|name| *name == target)
                     .and_then(|name| {
                         sym.section_index().map(|index| Symbol {
                             name: name.into(),
@@ -77,11 +72,13 @@ impl SymbolResolver<'_> {
                             section_index: index.0,
                         })
                     })
-            })
-            .collect();
+            });
 
-        let debug_symbols: Option<Vec<_>> = file
-            .section_by_name(".gnu_debugdata")
+        if result.is_some() {
+            return result;
+        }
+
+        file.section_by_name(".gnu_debugdata")
             .and_then(|sec| sec.data().ok_or_warn())
             .and_then(|mut data| {
                 let mut decompressed = Vec::new();
@@ -90,42 +87,25 @@ impl SymbolResolver<'_> {
                     .map(|_| decompressed)
             })
             .and_then(|data| SymbolResolver::from_data(data).ok_or_warn())
-            .map(|resolver| {
-                resolver
-                    .find_symbol(pattern)
-                    .into_iter()
-                    .filter_map(|sym| {
-                        let Symbol {
+            .and_then(|resolver| {
+                resolver.find_symbol(target).into_iter().find_map(|sym| {
+                    let Symbol {
+                        name,
+                        addr,
+                        section_index,
+                    } = sym;
+
+                    file.section_by_index(SectionIndex(section_index))
+                        .and_then(|sec| sec.name())
+                        .ok()
+                        .and_then(|name| file.section_by_name(name))
+                        .map(|sec| Symbol {
                             name,
                             addr,
-                            section_index,
-                        } = sym;
-
-                        file.section_by_index(SectionIndex(section_index))
-                            .and_then(|sec| sec.name())
-                            .ok()
-                            .and_then(|name| file.section_by_name(name))
-                            .map(|sec| Symbol {
-                                name,
-                                addr,
-                                section_index: sec.index().0,
-                            })
-                    })
-                    .collect()
-            });
-
-        if let Some(debug_symbols) = debug_symbols {
-            symbols.extend(debug_symbols);
-        }
-
-        symbols
-    }
-
-    pub fn find_first(&self, pattern: &Regex) -> Result<Symbol> {
-        self.find_symbol(pattern)
-            .into_iter()
-            .next()
-            .context(format!("cannot resolve symbol by pattern: {pattern}"))
+                            section_index: sec.index().0,
+                        })
+                })
+            })
     }
 
     pub fn find_section(&self, index: usize) -> Result<Section> {
@@ -150,12 +130,12 @@ impl Drop for SymbolResolver<'_> {
     }
 }
 
-pub struct CachedFirstResolver<'a> {
+pub struct CachedSymbolResolver<'a> {
     resolver: Pin<Box<SymbolResolver<'a>>>,
     caches: OnceMap<String, Symbol>,
 }
 
-impl CachedFirstResolver<'_> {
+impl CachedSymbolResolver<'_> {
     pub fn from_file<P: AsRef<Path>>(file: P) -> Result<Self> {
         Ok(Self {
             resolver: SymbolResolver::from_file(file)?,
@@ -174,15 +154,11 @@ impl CachedFirstResolver<'_> {
         self.caches.map_try_insert(
             pattern.into(),
             |pattern| {
-                let pattern_regex = Regex::new(pattern)?;
-                let symbol = self
-                    .resolver
-                    .find_symbol(&pattern_regex)
+                self.resolver
+                    .find_symbol(pattern)
                     .into_iter()
                     .next()
-                    .context(format!("cannot resolve symbol by pattern: {pattern}"))?;
-
-                Ok(symbol)
+                    .context(format!("cannot resolve symbol by pattern: {pattern}"))
             },
             |_, v| v.clone(),
         )

@@ -1,19 +1,13 @@
-use crate::android::properties;
 use crate::binary::cpp::ArgCounter;
 use crate::binary::symbol::{Section, Symbol, SymbolResolver};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::info;
 use once_cell::sync::Lazy;
-use regex_lite::Regex;
+use strum::IntoEnumIterator;
+use zynx_bridge_common::zygote::SpecializeVersion;
 
 mod embryo;
 pub mod zygote;
-
-pub static API_LEVEL: Lazy<i32> = Lazy::new(|| {
-    properties::get("ro.build.version.sdk")
-        .parse()
-        .expect("failed to parse api level")
-});
 
 pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 
@@ -21,22 +15,28 @@ pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 #[derive(Debug)]
 pub struct SpecializeCommonConfig {
     pub lib: &'static str,
+    pub ver: SpecializeVersion,
     pub sym: Symbol,
     pub sec: Section,
     pub args_cnt: usize,
 }
 
-// Todo: resolve specific symbol
 impl SpecializeCommonConfig {
     fn resolve() -> Result<Self> {
         let resolver = SymbolResolver::from_file(SC_LIBRARY_PATH)?;
-        let sym =
-            resolver.find_first(&Regex::new("_ZN12_GLOBAL__N_116SpecializeCommonE.*").unwrap())?;
+
+        let (sym, ver) = SpecializeVersion::iter()
+            .find_map(|ver| {
+                resolver.find_symbol(ver.as_ref()).map(|sym| (sym, ver))
+            })
+            .context("no known SpecializeCommon symbol found in libandroid_runtime.so")?;
+
         let sec = resolver.find_section(sym.section_index)?;
         let args_count = ArgCounter::count_args_for_symbol(&sym.name)?;
 
         Ok(Self {
             lib: SC_LIBRARY_PATH,
+            ver,
             sym,
             sec,
             args_cnt: args_count,

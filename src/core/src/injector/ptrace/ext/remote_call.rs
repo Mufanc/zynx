@@ -53,12 +53,6 @@ pub trait PtraceRemoteCallExt {
     fn call_remote(&self, func: usize, args: &[c_long]) -> Result<c_long>;
     fn resolve_fn<F: Into<RemoteFn>>(&self, func: F) -> Result<usize>;
     fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long>;
-    fn call_remote_auto_nowait<F: Into<RemoteFn>>(
-        &self,
-        func: F,
-        return_addr: usize,
-        args: &[c_long],
-    ) -> Result<()>;
     fn errno(&self) -> Result<Errno>;
 }
 
@@ -133,29 +127,6 @@ where
 
     fn call_remote_auto<F: Into<RemoteFn>>(&self, func: F, args: &[c_long]) -> Result<c_long> {
         self.call_remote(self.resolve_fn(func)?, args)
-    }
-
-    fn call_remote_auto_nowait<F: Into<RemoteFn>>(
-        &self,
-        func: F,
-        return_addr: usize,
-        args: &[c_long],
-    ) -> Result<()> {
-        let addr = self.resolve_fn(func)?;
-
-        let mut regs = self.get_regs()?;
-
-        regs.align_sp();
-        regs.set_pc(addr);
-
-        for (i, arg) in args.iter().enumerate() {
-            regs.set_arg(i, *arg);
-        }
-
-        regs.set_lr(return_addr);
-
-        self.set_regs(&regs)?;
-        self.detach(None)
     }
 
     fn errno(&self) -> Result<Errno> {
