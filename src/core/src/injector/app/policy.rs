@@ -296,7 +296,7 @@ impl PackageInfoService {
     ) -> Result<()> {
         let async_fd = AsyncFd::with_interest(inotify.as_raw_fd(), Interest::READABLE)?;
 
-        let mut buffer = [0u8; 4096];
+        let mut buffer = [0u8; 0x4000];
 
         loop {
             let mut lock = async_fd.readable().await?;
