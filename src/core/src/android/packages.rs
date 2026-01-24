@@ -1,24 +1,26 @@
 use anyhow::Result;
-use nix::libc::{gid_t, uid_t};
+use nix::unistd::{Gid, Uid};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
+#[derive(Clone, Debug)]
 pub struct PackageInfo {
-    name: String,
-    uid: uid_t,
-    debuggable: bool,
-    data_dir: String,
-    seinfo: String,
-    gids: Vec<gid_t>
+    pub name: String,
+    pub uid: Uid,
+    pub debuggable: bool,
+    pub data_dir: String,
+    pub seinfo: String,
+    pub gids: Vec<Gid>,
 }
 
-fn parse_gids(gids_str: &str) -> Option<Vec<gid_t>> {
+fn parse_gids(gids_str: &str) -> Option<Vec<Gid>> {
     if gids_str.is_empty() || gids_str == "none" {
         return Some(Vec::new());
     }
 
-    gids_str.split(",")
-        .map(|s| s.parse().ok())
+    gids_str
+        .split(",")
+        .map(|s| s.parse().ok().map(|x| Gid::from_raw(x)))
         .collect()
 }
 
@@ -30,7 +32,7 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
     }
 
     let name = fields[0].into();
-    let uid = fields[1].parse().ok()?;
+    let uid = Uid::from_raw(fields[1].parse().ok()?);
     let debuggable = fields[2] != "0";
     let data_dir = fields[3].into();
     let seinfo = fields[4].into();
@@ -42,7 +44,7 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
         debuggable,
         data_dir,
         seinfo,
-        gids
+        gids,
     })
 }
 

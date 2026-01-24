@@ -1,6 +1,8 @@
+use crate::injector::app::policy::{
+    EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy, PackageInfoService,
+};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, SC_CONFIG};
-use crate::injector::app::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
 use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
 use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
@@ -82,7 +84,7 @@ impl EmbryoInjector {
         loop {
             let status = self.wait()?;
 
-            debug!("{self} status = {status:?}");
+            trace!("{self} status = {status:?}");
 
             match status {
                 WaitStatus::Exited(_, code) => {
@@ -142,11 +144,14 @@ impl EmbryoInjector {
     }
 
     fn check_process(&self, args: &SpecializeArgs) -> Result<bool> {
+        let uid = Uid::from_raw(args.uid as _);
+        let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
-            Uid::from_raw(args.uid as _),
+            uid,
             Gid::from_raw(args.gid as _),
             args.is_system_server,
             args.is_child_zygote,
+            package_info,
         );
 
         self.check_process_with_structured_args(args, fast_args)
@@ -155,7 +160,7 @@ impl EmbryoInjector {
     fn check_process_with_structured_args(
         &self,
         specialize_args: &SpecializeArgs,
-        check_args: EmbryoCheckArgs,
+        check_args: EmbryoCheckArgs<'_>,
     ) -> Result<bool> {
         Ok(match InjectorPolicy::check_embryo(&check_args) {
             EmbryoCheckResult::Deny => false,

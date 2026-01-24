@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use aya::maps::{Array, HashMap, Map, MapData, RingBuf};
 use aya::programs::TracePoint;
 use aya::{Ebpf, include_bytes_aligned};
@@ -174,6 +174,10 @@ impl Monitor {
 
 pub async fn init_once(config: Config) -> Result<()> {
     let instance: &'static _ = Box::leak(Box::new(Monitor::new(config).await?));
-    INSTANCE.get_or_init(|| instance);
+
+    INSTANCE
+        .set(instance)
+        .map_err(|_| anyhow!("Monitor already initialized"))?;
+
     Ok(())
 }
