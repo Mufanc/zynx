@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{Result, anyhow};
 use inotify::{Inotify, WatchMask};
 use log::{debug, error, info, warn};
 use nix::unistd::{Gid, Uid};
+use once_cell::sync::Lazy;
 use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use std::ops::Deref;
 use tokio::io::Interest;
@@ -87,36 +89,142 @@ impl<'a> EmbryoCheckArgs<'a> {
     }
 }
 
-pub enum EmbryoCheckResult {
-    Deny,
-    Allow,
-    MoreInfo,
+// === Library Info & Policy Decision ===
+
+/// Library info (represents additional modules only, Bridge is handled separately)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LibraryInfo {
+    pub path: PathBuf,
 }
 
-pub struct InjectorPolicy {}
+/// Policy decision result
+#[derive(Debug, Clone)]
+pub enum PolicyDecision {
+    /// Allow injection with library list
+    Allow(Vec<LibraryInfo>),
+    /// Insufficient info, requires slow-path
+    MoreInfo,
+    /// Deny this provider's handling (does not affect other providers)
+    Deny,
+}
 
-impl InjectorPolicy {
-    pub fn check_embryo(args: &EmbryoCheckArgs<'_>) -> EmbryoCheckResult {
+/// Collection of policy decisions
+#[derive(Debug)]
+pub struct PolicyDecisions {
+    pub decisions: Vec<PolicyDecision>,
+    pub more_info: bool,
+}
+
+/// Policy provider trait
+pub trait PolicyProvider: Send + Sync {
+    fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
+}
+
+// === PolicyProviderManager ===
+
+static POLICY_PROVIDER_MANAGER: Lazy<PolicyProviderManager> = Lazy::new(|| PolicyProviderManager {
+    providers: vec![
+        Box::new(SystemPolicyProvider),
+        // Todo: provider for /data/local/tmp/zynx
+    ],
+});
+
+pub struct PolicyProviderManager {
+    providers: Vec<Box<dyn PolicyProvider>>,
+}
+
+impl PolicyProviderManager {
+    pub fn instance() -> &'static Self {
+        &POLICY_PROVIDER_MANAGER
+    }
+
+    pub fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
+        let mut decisions = Vec::with_capacity(self.providers.len());
+        let mut more_info = false;
+
+        for provider in &self.providers {
+            let decision = provider.check(args);
+
+            if matches!(decision, PolicyDecision::MoreInfo) {
+                more_info = true;
+            }
+
+            decisions.push(decision);
+        }
+
+        PolicyDecisions { decisions, more_info }
+    }
+
+    pub fn recheck_slow(&self, args: &EmbryoCheckArgs<'_>, result: &mut PolicyDecisions) {
+        result.more_info = false;
+
+        for (index, decision) in result.decisions.iter_mut().enumerate() {
+            if matches!(decision, PolicyDecision::MoreInfo) {
+                let new_decision = self.providers[index].check(args);
+
+                if matches!(new_decision, PolicyDecision::MoreInfo) {
+                    warn!("provider {} returned MoreInfo in slow path, treating as Deny", index);
+                    *decision = PolicyDecision::Deny;
+                } else {
+                    *decision = new_decision;
+                }
+            }
+        }
+    }
+
+    /// Aggregate decisions from all policy providers.
+    /// Returns None if all denied, Some(libs) if injection allowed (Bridge + extra libs).
+    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<Vec<LibraryInfo>> {
+        let mut has_allow = false;
+        let mut inject_libs = Vec::new();
+
+        for decision in decisions {
+            if let PolicyDecision::Allow(libs) = decision {
+                has_allow = true;
+
+                for lib in libs {
+                    if !inject_libs.contains(lib) {
+                        inject_libs.push(lib.clone());
+                    }
+                }
+            }
+        }
+
+        if has_allow {
+            Some(inject_libs)
+        } else {
+            None
+        }
+    }
+}
+
+// === SystemPolicyProvider (debug only) ===
+
+pub struct SystemPolicyProvider;
+
+impl PolicyProvider for SystemPolicyProvider {
+    fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
         match args {
             EmbryoCheckArgs::Fast(fast) => {
                 if let Some(info) = &fast.package_info {
                     debug!("package info: {:?}", info);
                 }
-
-                EmbryoCheckResult::MoreInfo
+                PolicyDecision::MoreInfo
             }
             EmbryoCheckArgs::Slow(slow) => {
                 debug!("nice name = {:?}", slow.nice_name);
 
                 if slow.is_system_server {
-                    EmbryoCheckResult::Allow
+                    PolicyDecision::Allow(vec![])
                 } else {
-                    EmbryoCheckResult::Deny
+                    PolicyDecision::Deny
                 }
             }
         }
     }
 }
+
+// === PackageInfoService ===
 
 pub struct PackageInfoService {
     data: Arc<RwLock<HashMap<Uid, Vec<PackageInfo>>>>,

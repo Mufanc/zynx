@@ -1,5 +1,5 @@
 use crate::injector::app::policy::{
-    EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy, PackageInfoService,
+    EmbryoCheckArgs, LibraryInfo, PackageInfoService, PolicyProviderManager,
 };
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, SC_CONFIG};
@@ -106,8 +106,10 @@ impl EmbryoInjector {
 
                     debug!("{self} specialize args: {args:?}");
 
-                    if self.check_process(&args)? {
-                        self.do_inject(regs, &raw_args)?;
+                    let inject_libs = self.check_process(&args)?;
+
+                    if let Some(libs) = inject_libs {
+                        self.do_inject(regs, &raw_args, &libs)?;
                     } else {
                         self.set_regs(&regs)?;
                     }
@@ -143,7 +145,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn check_process(&self, args: &SpecializeArgs) -> Result<bool> {
+    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<LibraryInfo>>> {
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -154,34 +156,21 @@ impl EmbryoInjector {
             package_info,
         );
 
-        self.check_process_with_structured_args(args, fast_args)
+        let manager = PolicyProviderManager::instance();
+        let mut result = manager.check(&fast_args);
+
+        if result.more_info {
+            let slow_args = fast_args.into_slow(
+                self.read_jstring(args.env, args.managed_nice_name)?,
+                self.read_jstring(args.env, args.managed_app_data_dir)?,
+            );
+            manager.recheck_slow(&slow_args, &mut result);
+        }
+
+        Ok(manager.aggregate(&result.decisions))
     }
 
-    fn check_process_with_structured_args(
-        &self,
-        specialize_args: &SpecializeArgs,
-        check_args: EmbryoCheckArgs<'_>,
-    ) -> Result<bool> {
-        Ok(match InjectorPolicy::check_embryo(&check_args) {
-            EmbryoCheckResult::Deny => false,
-            EmbryoCheckResult::Allow => true,
-            EmbryoCheckResult::MoreInfo => {
-                if check_args.is_slow() {
-                    warn!("recursive check detected, denying process");
-                    return Ok(false);
-                }
-
-                let slow_args = check_args.into_slow(
-                    self.read_jstring(specialize_args.env, specialize_args.managed_nice_name)?,
-                    self.read_jstring(specialize_args.env, specialize_args.managed_app_data_dir)?,
-                );
-
-                self.check_process_with_structured_args(specialize_args, slow_args)?
-            }
-        })
-    }
-
-    fn do_inject(&self, mut regs: RegSet, raw_args: &[c_long]) -> Result<()> {
+    fn do_inject(&self, mut regs: RegSet, raw_args: &[c_long], _libs: &[LibraryInfo]) -> Result<()> {
         info!("injecting process: {self}, raw_args = {raw_args:?}");
 
         let trampoline_addr = self.mmap_ex(
