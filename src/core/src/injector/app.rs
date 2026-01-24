@@ -8,6 +8,7 @@ use zynx_bridge_common::zygote::SpecializeVersion;
 
 mod embryo;
 pub mod zygote;
+mod policy;
 
 pub const SC_LIBRARY_PATH: &str = "/system/lib64/libandroid_runtime.so";
 

@@ -4,6 +4,7 @@ mod daemon;
 mod injector;
 mod misc;
 mod monitor;
+mod android;
 
 use crate::cli::Cli;
 use crate::misc::inject_panic_handler;

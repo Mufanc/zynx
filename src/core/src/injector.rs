@@ -1,6 +1,6 @@
 use crate::monitor::{Message, Monitor};
 use crate::{daemon, monitor};
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 use app::zygote::ZYGOTE_NAME;
 use app::zygote::ZygoteTracer;
 use log::{error, info};
@@ -12,7 +12,6 @@ use procfs::process::Process;
 mod app;
 mod asm;
 mod misc;
-mod policy;
 mod ptrace;
 mod trampoline;
 

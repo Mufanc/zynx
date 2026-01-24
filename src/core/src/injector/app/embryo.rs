@@ -1,6 +1,6 @@
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, SC_CONFIG};
-use crate::injector::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
+use crate::injector::app::policy::{EmbryoCheckArgs, EmbryoCheckResult, InjectorPolicy};
 use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
 use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
