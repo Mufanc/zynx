@@ -8,9 +8,10 @@ use nix::sys::signal;
 use nix::sys::signal::Signal;
 use nix::unistd::Pid;
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
 use scopeguard::defer;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task;
 use tokio::time::timeout;
@@ -105,7 +106,7 @@ impl ZygoteTracer {
 
         info!("SpecializeCommon vma: {sc_vma:?}, addr: {sc_addr}");
 
-        let mut tracer = ZYGOTE_TRACER.write().expect("lock poisoned");
+        let mut tracer = ZYGOTE_TRACER.write();
         tracer.replace(Self {
             specialize_fn: sc_addr,
             maps,
@@ -115,12 +116,12 @@ impl ZygoteTracer {
     }
 
     pub fn reset() -> Result<()> {
-        ZYGOTE_TRACER.write().expect("lock poisoned").take();
+        ZYGOTE_TRACER.write().take();
         Ok(())
     }
 
     pub fn on_fork(pid: Pid) -> Result<()> {
-        let lock = ZYGOTE_TRACER.read().expect("lock poisoned");
+        let lock = ZYGOTE_TRACER.read();
         let tracer = lock.as_ref().context("zygote tracer not initialized")?;
 
         let specialize_fn = tracer.specialize_fn;

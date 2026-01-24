@@ -8,9 +8,10 @@ use nix::libc::RLIM_INFINITY;
 use nix::sys::resource;
 use nix::sys::resource::Resource;
 use nix::unistd::Pid;
+use parking_lot::Mutex;
 use std::ffi::CStr;
 use std::mem;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex as AsyncMutex;
@@ -162,7 +163,7 @@ impl Monitor {
     }
 
     pub fn attach_zygote(&self, pid: i32) -> Result<()> {
-        let mut zygote_info = self.zygote_info.lock().expect("mutex poisoned");
+        let mut zygote_info = self.zygote_info.lock();
         zygote_info.set(0, pid, 0 /* BPF_ANY */)?;
         Ok(())
     }
