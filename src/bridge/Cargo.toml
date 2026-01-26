@@ -9,8 +9,10 @@ crate-type = ["cdylib"]
 [dependencies]
 android_logger = { workspace = true }
 anyhow = { workspace = true }
+bytemuck = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["mman", "user"] }
-proc-macros = { path = "../proc-macros" }
+rkyv = { workspace = true }
+uds = { workspace = true }
 zynx-bridge-common = { path = "../bridge-common" }
 zynx-common = { path = "../common" }

@@ -1,5 +1,6 @@
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
-use nix::libc::c_long;
+use nix::libc::{c_int, c_long};
+use rkyv::{Archive, Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumIter};
 
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq, AsRefStr, EnumIter)]
@@ -94,4 +95,15 @@ impl SpecializeArgs {
             mount_sysprop_overrides: require!(V),
         }
     }
+}
+
+#[derive(Debug, Archive, Serialize, Deserialize)]
+#[rkyv(derive(Debug))]
+pub struct LibraryList {
+    pub ids: Vec<String>,
+}
+
+#[repr(C)]
+pub struct BridgeArgs {
+    pub conn_fd: c_int,
 }

@@ -6,5 +6,6 @@ edition.workspace = true
 [dependencies]
 jni-sys = { workspace = true }
 nix = { workspace = true }
+rkyv = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }

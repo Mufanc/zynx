@@ -8,6 +8,7 @@ android_logger = { workspace = true }
 anyhow = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
+bytemuck = { workspace = true }
 clap = { workspace = true }
 cpp_demangle = { workspace = true }
 daemonize = { workspace = true }
@@ -24,10 +25,12 @@ once_cell = { workspace = true }
 once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
+rkyv = { workspace = true }
 scopeguard = { workspace = true }
 strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
+uds = { workspace = true }
 zynx-bridge-common = { path = "../bridge-common" }
 zynx-common = { path = "../common" }
 zynx-ebpf-common = { path = "../ebpf-common" }

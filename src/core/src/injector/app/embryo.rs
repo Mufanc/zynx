@@ -25,27 +25,18 @@ use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
 use once_cell::sync::Lazy;
 use scopeguard::defer;
-use std::ffi::c_void;
+use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use std::os::fd::{AsFd, AsRawFd};
-use std::{fmt, ptr};
+use std::os::fd::{AsFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::sync::Arc;
 use syscalls::Sysno;
-use zynx_bridge_common::zygote::SpecializeArgs;
+use uds::UnixSeqpacketConn;
+use zynx_bridge_common::dlfcn::DlextInfo;
+use zynx_bridge_common::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
 use zynx_common::ext::ResultExt;
 
-static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE);
-
-#[repr(C)]
-pub struct DlextInfo {
-    pub flags: u64,
-    pub reserved_addr: *const c_void,
-    pub reserved_size: size_t,
-    pub relro_fd: c_int,
-    pub library_fd: c_int,
-    pub library_fd_offset: off64_t,
-    pub library_namespace: *const c_void,
-}
+static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 
 pub struct EmbryoInjector {
     tracee: RemoteProcess,
@@ -145,7 +136,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<LibraryInfo>>> {
+    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Arc<dyn LibraryInfo>>>> {
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -170,8 +161,16 @@ impl EmbryoInjector {
         Ok(manager.aggregate(&result.decisions))
     }
 
-    fn do_inject(&self, mut regs: RegSet, raw_args: &[c_long], _libs: &[LibraryInfo]) -> Result<()> {
-        info!("injecting process: {self}, raw_args = {raw_args:?}");
+    fn do_inject(
+        &self,
+        mut regs: RegSet,
+        raw_args: &[c_long],
+        libs: &[Arc<dyn LibraryInfo>],
+    ) -> Result<()> {
+        info!(
+            "injecting process: {self}, raw_args = {raw_args:?}, libs count = {}",
+            libs.len()
+        );
 
         let trampoline_addr = self.mmap_ex(
             MmapOptions::new(
@@ -188,23 +187,22 @@ impl EmbryoInjector {
 
         debug!("{self} bridge fd: {bridge_fd:?}");
 
-        let bridge_fd_num = bridge_fd.as_raw_fd();
+        let bridge_fd = bridge_fd.forget();
 
-        bridge_fd.forget();
-        conn.close(self)?;
-
-        // Todo: serve for module fds
+        let (conn_fd_local, conn_fd_remote) = if !libs.is_empty() {
+            let (local, remote) = conn.forget();
+            (Some(local), Some(remote))
+        } else {
+            conn.close(self)?;
+            (None, None)
+        };
 
         let mut ops: VecAssembler<Aarch64Relocation> = VecAssembler::new(0);
 
-        let info = DlextInfo {
-            flags: 0x10, // ANDROID_DLEXT_USE_LIBRARY_FD
-            reserved_addr: ptr::null(),
-            reserved_size: 0,
-            relro_fd: 0,
-            library_fd: bridge_fd_num,
-            library_fd_offset: 0,
-            library_namespace: ptr::null(),
+        let info = unsafe { DlextInfo::from_raw_fd(bridge_fd) };
+
+        let bridge_args = BridgeArgs {
+            conn_fd: conn_fd_remote.unwrap_or(-1),
         };
 
         dynasm!(ops
@@ -226,7 +224,7 @@ impl EmbryoInjector {
             // close
             ; stp x0, xzr, [sp, #-16]!
             ; mov x8, Sysno::close as _
-            ; mov x0, bridge_fd_num as _
+            ; mov x0, bridge_fd as _
             ; svc #0
             ; ldp x0, xzr, [sp], #16
 
@@ -253,6 +251,7 @@ impl EmbryoInjector {
             ; mov ip, x0
             ; add x0, sp, 16
             ; mov x1, SC_CONFIG.args_cnt as _
+            ; adr x2, >bridge_args
             ; blr ip
             ; ldp fp, lr, [sp], #16
 
@@ -312,6 +311,10 @@ impl EmbryoInjector {
             ;; ops.extend(crate::misc::as_byte_slice(&info))
 
             // for hooks
+            ; .align align_of::<BridgeArgs>()
+            ; bridge_args:
+            ;; ops.extend(crate::misc::as_byte_slice(&bridge_args))
+
             ; .align 8
             ; pre_hook_sym:
             ;; ops.extend(c"specialize_pre".to_bytes_with_nul())
@@ -341,7 +344,34 @@ impl EmbryoInjector {
         self.poke_data(trampoline_addr, &bytecode)?;
 
         regs.set_pc(trampoline_addr);
+
         self.set_regs(&regs)?;
+        self.detach(None)?;
+
+        if let Some(conn_fd) = conn_fd_local {
+            self.send_inject_libs(conn_fd, libs)?;
+        }
+
+        Ok(())
+    }
+
+    fn send_inject_libs(&self, conn_fd: OwnedFd, libs: &[Arc<dyn LibraryInfo>]) -> Result<()> {
+        info!(
+            "send inject libs: connection fd = {conn_fd:?}, libs count = {}",
+            libs.len()
+        );
+
+        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
+
+        let library_list = LibraryList {
+            ids: libs.iter().map(|lib| lib.id().into()).collect(),
+        };
+        let data = rkyv::to_bytes::<rkyv::rancor::Error>(&library_list)?;
+
+        let library_fds: Vec<_> = libs.iter().map(|lib| lib.as_raw_fd()).collect();
+
+        conn.send(bytemuck::bytes_of(&[data.len(), library_fds.len()]))?;
+        conn.send_fds(&data, &library_fds)?;
 
         Ok(())
     }

@@ -6,7 +6,7 @@ use anyhow::bail;
 use log::warn;
 use nix::libc::{
     AF_UNIX, CMSG_DATA, CMSG_FIRSTHDR, CMSG_SPACE, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA,
-    PR_SET_VMA_ANON_NAME, SOCK_SEQPACKET, c_int, msghdr,
+    PR_SET_VMA_ANON_NAME, SOCK_DGRAM, SOCK_SEQPACKET, c_int, c_long, msghdr,
 };
 use nix::sys::socket;
 use nix::sys::socket::{ControlMessage, MsgFlags};
@@ -34,8 +34,9 @@ impl RemoteFd {
         Ok(())
     }
 
-    pub fn forget(mut self) {
+    pub fn forget(mut self) -> RawFd {
         self.leak = false;
+        self.fd
     }
 }
 
@@ -115,6 +116,13 @@ impl SocketConnection {
         self.remote_fd.close(tracee)?;
         Ok(())
     }
+
+    pub fn forget(self) -> (OwnedFd, RawFd) {
+        let local_fd = self.local_fd;
+        let remote_fd = self.remote_fd.forget();
+
+        (local_fd, remote_fd)
+    }
 }
 
 pub trait PtraceIpcExt {
@@ -161,7 +169,7 @@ where
             build_args!(addr, size, prot, flags, fd.map(|it| it.fd).unwrap_or(-1), offset)
         )?;
 
-        if result == MAP_FAILED as _ {
+        if result == MAP_FAILED as c_long {
             let errno = self.errno()?;
             bail!("failed to call mmap: {errno}");
         }
