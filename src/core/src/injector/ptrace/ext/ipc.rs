@@ -6,7 +6,7 @@ use anyhow::bail;
 use log::warn;
 use nix::libc::{
     AF_UNIX, CMSG_DATA, CMSG_FIRSTHDR, CMSG_SPACE, MAP_ANONYMOUS, MAP_FAILED, PR_SET_VMA,
-    PR_SET_VMA_ANON_NAME, SOCK_DGRAM, SOCK_SEQPACKET, c_int, c_long, msghdr,
+    PR_SET_VMA_ANON_NAME, SOCK_SEQPACKET, c_int, c_long, msghdr,
 };
 use nix::sys::socket;
 use nix::sys::socket::{ControlMessage, MsgFlags};

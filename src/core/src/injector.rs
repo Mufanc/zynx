@@ -1,7 +1,7 @@
+use crate::android::packages::PackageInfoService;
 use crate::monitor::{Message, Monitor};
 use crate::{daemon, monitor};
 use anyhow::{Result, bail};
-use app::policy::PackageInfoService;
 use app::zygote::ZYGOTE_NAME;
 use app::zygote::ZygoteTracer;
 use log::{error, info};
@@ -52,8 +52,8 @@ pub async fn serve() -> Result<()> {
         target_names: vec![ZYGOTE_NAME.into()],
     };
 
-    PackageInfoService::init_once().await?;
-    monitor::init_once(config).await?;
+    PackageInfoService::init();
+    Monitor::init(config)?;
     daemon::notify_launcher_if_needed();
 
     let monitor = Monitor::instance();

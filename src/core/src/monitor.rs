@@ -18,7 +18,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task;
 use zynx_ebpf_common::Message as EbpfMessage;
 
-static INSTANCE: OnceLock<&'static Monitor> = OnceLock::new();
+static INSTANCE: OnceLock<Monitor> = OnceLock::new();
 
 pub struct Config {
     pub target_paths: Vec<String>,
@@ -69,7 +69,7 @@ where
 }
 
 impl Monitor {
-    async fn new(config: Config) -> Result<Self> {
+    fn new(config: Config) -> Result<Self> {
         resource::setrlimit(Resource::RLIMIT_MEMLOCK, RLIM_INFINITY, RLIM_INFINITY)?;
 
         let mut ebpf = Ebpf::load(include_bytes_aligned!(concat!(
@@ -168,17 +168,15 @@ impl Monitor {
         Ok(())
     }
 
+    pub fn init(config: Config) -> Result<()> {
+        let monitor = Self::new(config)?;
+        INSTANCE
+            .set(monitor)
+            .map_err(|_| anyhow!("Monitor already initialized"))?;
+        Ok(())
+    }
+
     pub fn instance() -> &'static Self {
         INSTANCE.get().expect("monitor is not running")
     }
-}
-
-pub async fn init_once(config: Config) -> Result<()> {
-    let instance: &'static _ = Box::leak(Box::new(Monitor::new(config).await?));
-
-    INSTANCE
-        .set(instance)
-        .map_err(|_| anyhow!("Monitor already initialized"))?;
-
-    Ok(())
 }

@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use log::info;
 use nix::libc::{RTLD_NOW, c_char, c_int};
-use std::ffi::{CStr, CString, c_void};
+use std::ffi::{CStr, c_void};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use zynx_bridge_common::dlfcn::DlextInfo;
 
