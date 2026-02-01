@@ -1,21 +1,21 @@
+use crate::android::inotify::AsyncInotify;
+use anyhow::{Result, anyhow};
+use log::{debug, error, info, warn};
+use nix::unistd::{Gid, Uid};
+use notify::event::{ModifyKind, RenameMode};
+use notify::{EventKind, EventKindMask};
+use once_cell::sync::Lazy;
+use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::os::fd::AsRawFd;
-use std::sync::Arc;
-
-use anyhow::Result;
-use inotify::{Inotify, WatchMask};
-use log::{debug, error, info, warn};
-use nix::unistd::{Gid, Uid};
-use once_cell::sync::Lazy;
-use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
-use tokio::io::Interest;
-use tokio::io::unix::AsyncFd;
+use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
+use tokio::task;
 use tokio::task::JoinHandle;
 
-static PACKAGE_INFO_SERVICE: Lazy<PackageInfoService> =
-    Lazy::new(|| PackageInfoService::new().expect("failed to init PackageInfoService"));
+static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
+static PACKAGE_INFO_SERVICE: OnceLock<PackageInfoService> = OnceLock::new();
 
 pub type PackageInfoLocked<'a> = MappedRwLockReadGuard<'a, [PackageInfo]>;
 
@@ -36,7 +36,7 @@ fn parse_gids(gids_str: &str) -> Option<Vec<Gid>> {
 
     gids_str
         .split(",")
-        .map(|s| s.parse().ok().map(|x| Gid::from_raw(x)))
+        .map(|s| s.parse().ok().map(Gid::from_raw))
         .collect()
 }
 
@@ -65,7 +65,7 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
 }
 
 pub fn parse_package_list() -> Result<Vec<PackageInfo>> {
-    let file = File::open("/data/system/packages.list")?;
+    let file = File::open(&*PACKAGE_LIST_FILE)?;
     let reader = BufReader::new(file);
 
     let packages: Vec<PackageInfo> = reader
@@ -84,8 +84,8 @@ pub struct PackageInfoService {
 }
 
 impl PackageInfoService {
-    fn new() -> Result<Self> {
-        let packages = parse_package_list()?;
+    pub async fn init() -> Result<()> {
+        let packages = task::block_in_place(parse_package_list)?;
         let map = Self::build_map(packages);
 
         info!(
@@ -93,25 +93,31 @@ impl PackageInfoService {
             map.values().map(|v| v.len()).sum::<usize>()
         );
 
-        let inotify = Inotify::init()?;
-        inotify.watches().add("/data/system", WatchMask::MOVED_TO)?;
-
+        let inotify = AsyncInotify::new(
+            "/data/system",
+            EventKindMask::CREATE | EventKindMask::MODIFY_NAME,
+        )?;
         let data = Arc::new(RwLock::new(map));
-        let watch_task = Self::spawn_watch_task(inotify, Arc::clone(&data));
+        let data_clone = data.clone();
 
-        Ok(Self {
-            data,
-            _watch_task: watch_task,
-        })
-    }
+        let watch_task = task::spawn(async move {
+            if let Err(err) = Self::watch_loop(inotify, data_clone).await {
+                error!("inotify watch loop exited with error: {err:?}");
+            }
+        });
 
-    /// Trigger lazy initialization
-    pub fn init() {
-        Lazy::force(&PACKAGE_INFO_SERVICE);
+        PACKAGE_INFO_SERVICE
+            .set(Self {
+                data,
+                _watch_task: watch_task,
+            })
+            .map_err(|_| anyhow!("duplicate called"))?;
+
+        Ok(())
     }
 
     pub fn instance() -> &'static Self {
-        &PACKAGE_INFO_SERVICE
+        PACKAGE_INFO_SERVICE.wait()
     }
 
     pub fn query(&self, uid: Uid) -> Option<PackageInfoLocked<'_>> {
@@ -127,37 +133,19 @@ impl PackageInfoService {
         map
     }
 
-    fn spawn_watch_task(
-        inotify: Inotify,
-        data: Arc<RwLock<HashMap<Uid, Vec<PackageInfo>>>>,
-    ) -> JoinHandle<()> {
-        tokio::task::spawn(async move {
-            if let Err(e) = Self::watch_loop(inotify, data).await {
-                error!("inotify watch loop exited with error: {e:?}");
-            }
-        })
-    }
-
     async fn watch_loop(
-        mut inotify: Inotify,
+        mut inotify: AsyncInotify,
         data: Arc<RwLock<HashMap<Uid, Vec<PackageInfo>>>>,
     ) -> Result<()> {
-        let async_fd = AsyncFd::with_interest(inotify.as_raw_fd(), Interest::READABLE)?;
-
-        let mut buffer = [0u8; 0x4000];
-
         loop {
-            let mut lock = async_fd.readable().await?;
+            let event = inotify.wait().await?;
 
-            let events = inotify.read_events(&mut buffer)?;
-            for event in events {
-                if event.name.is_some_and(|name| name == "packages.list") {
-                    debug!("detected packages.list update, reloading...");
-                    Self::reload_packages(&data);
-                }
+            if event.kind == EventKind::Modify(ModifyKind::Name(RenameMode::To))
+                && event.paths.contains(&PACKAGE_LIST_FILE)
+            {
+                debug!("detected packages.list update, reloading...");
+                task::block_in_place(|| Self::reload_packages(&data));
             }
-
-            lock.clear_ready();
         }
     }
 
@@ -171,7 +159,7 @@ impl PackageInfoService {
                 *data = new_map;
                 drop(data);
 
-                info!("reloaded {} packages from packages.list", count);
+                info!("reloaded {count} packages from packages.list");
             }
             Err(err) => {
                 warn!("failed to reload packages.list: {err:?}, keeping old data");

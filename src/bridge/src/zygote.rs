@@ -30,13 +30,13 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
 
         let library_list = rkyv::access::<ArchivedLibraryList, rkyv::rancor::Error>(&buffer)?;
         let library_list: Vec<_> = library_list
-            .ids
+            .names
             .iter()
             .zip(fds)
-            .map(|(id, fd)| Library::new(id, unsafe { OwnedFd::from_raw_fd(fd) }))
+            .map(|(name, fd)| Library::new(name, unsafe { OwnedFd::from_raw_fd(fd) }))
             .collect();
 
-        drop(library_list); // Todo:
+        drop(library_list); // Todo: zygisk compatible api?
     }
 
     Ok(())

@@ -1,27 +1,21 @@
-mod debug;
-
-use std::collections::HashSet;
-use std::fmt::Debug;
-use std::fs::File;
-use std::os::fd::{AsRawFd, RawFd};
-use std::sync::Arc;
-
-use anyhow::Result;
-use log::warn;
-use nix::unistd::{Gid, Uid};
-use once_cell::sync::Lazy;
-use std::ops::Deref;
-use std::path::PathBuf;
-
+mod lite;
 use crate::android::packages::PackageInfoLocked;
-use crate::injector::app::policy::debug::SystemPolicyProvider;
+use crate::injector::app::policy::lite::LitePolicyProvider;
+use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use log::warn;
+use memfd::{FileSeal, Memfd, MemfdOptions};
+use nix::unistd::{Gid, Uid};
+use std::collections::HashSet;
+use std::fmt::{Debug, Display};
+use std::fs;
+use std::io::{Seek, SeekFrom, Write};
+use std::ops::Deref;
+use std::os::fd::{AsRawFd, RawFd};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
-static POLICY_PROVIDER_MANAGER: Lazy<PolicyProviderManager> = Lazy::new(|| PolicyProviderManager {
-    providers: vec![
-        Box::new(SystemPolicyProvider),
-        // Todo: provider for /data/local/tmp/zynx
-    ],
-});
+static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
 #[allow(unused)]
 pub struct EmbryoCheckArgsFast<'a> {
@@ -92,42 +86,67 @@ impl<'a> EmbryoCheckArgs<'a> {
     }
 }
 
-pub trait LibraryInfo: Debug + AsRawFd {
-    fn id(&self) -> &str;
+impl<'a> Deref for EmbryoCheckArgs<'a> {
+    type Target = EmbryoCheckArgsFast<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            EmbryoCheckArgs::Fast(args) => args,
+            EmbryoCheckArgs::Slow(args) => &args.fast_args,
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct LibraryFile {
-    id: String,
-    file: File,
+pub struct InjectLibrary {
+    name: String,
+    fd: Memfd,
 }
 
-impl AsRawFd for LibraryFile {
+impl InjectLibrary {
+    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
+        let path = path.as_ref();
+        let name = format!("zynx-inject::{name}");
+
+        let fd = MemfdOptions::default().allow_sealing(true).create(&name)?;
+
+        let mut file = fd.as_file();
+
+        file.write_all(&fs::read(path)?)?;
+        file.sync_data()?;
+        file.seek(SeekFrom::Start(0))?;
+
+        fd.add_seals(&[
+            FileSeal::SealGrow,
+            FileSeal::SealShrink,
+            FileSeal::SealWrite,
+            FileSeal::SealSeal,
+        ])?;
+
+        // Todo: setfilecon
+
+        Ok(Self { name, fd })
+    }
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path = path.as_ref();
+
+        Self::new(path, &path.display())
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+impl AsRawFd for InjectLibrary {
     fn as_raw_fd(&self) -> RawFd {
-        self.file.as_raw_fd()
-    }
-}
-
-impl LibraryInfo for LibraryFile {
-    fn id(&self) -> &str {
-        &self.id
-    }
-}
-
-impl LibraryFile {
-    fn new<P: Into<PathBuf>>(path: P) -> Result<Self> {
-        let path = path.into();
-
-        Ok(Self {
-            id: format!("file:{}", path.display()),
-            file: File::open(&path)?,
-        })
+        self.fd.as_raw_fd()
     }
 }
 
 #[derive(Debug, Clone)]
 pub enum PolicyDecision {
-    Allow(Vec<Arc<dyn LibraryInfo>>),
+    Allow(Vec<Arc<InjectLibrary>>),
     MoreInfo,
     Deny,
 }
@@ -138,7 +157,12 @@ pub struct PolicyDecisions {
     pub more_info: bool,
 }
 
+#[async_trait]
 pub trait PolicyProvider: Send + Sync {
+    async fn init(&self) -> Result<()> {
+        Ok(())
+    }
+
     fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
 }
 
@@ -147,8 +171,22 @@ pub struct PolicyProviderManager {
 }
 
 impl PolicyProviderManager {
+    pub async fn init() -> Result<()> {
+        let providers: Vec<Box<dyn PolicyProvider>> = vec![Box::new(LitePolicyProvider::default())];
+
+        for provider in &providers {
+            provider.init().await?;
+        }
+
+        POLICY_PROVIDER_MANAGER
+            .set(Self { providers })
+            .map_err(|_| anyhow!("duplicate called"))?;
+
+        Ok(())
+    }
+
     pub fn instance() -> &'static Self {
-        &POLICY_PROVIDER_MANAGER
+        POLICY_PROVIDER_MANAGER.wait()
     }
 
     pub fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
@@ -193,7 +231,7 @@ impl PolicyProviderManager {
 
     /// Aggregate decisions from all policy providers.
     /// Returns None if all denied, Some(libs) if injection allowed (bridge + extra libs).
-    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<Vec<Arc<dyn LibraryInfo>>> {
+    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<Vec<Arc<InjectLibrary>>> {
         let mut has_allow = false;
 
         let mut visited: HashSet<&str> = HashSet::new();
@@ -204,7 +242,7 @@ impl PolicyProviderManager {
                 has_allow = true;
 
                 for lib in libs {
-                    let id = lib.id();
+                    let id = lib.name();
                     if !visited.contains(id) {
                         visited.insert(id);
                         inject_libs.push(lib.clone());

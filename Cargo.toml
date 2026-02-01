@@ -10,6 +10,7 @@ version = "1.0.0"
 [workspace.dependencies]
 android_logger = "0.15"
 anyhow = "1"
+async-trait = "0.1"
 aya = { git = "https://github.com/aya-rs/aya" }
 aya-build = { git = "https://github.com/aya-rs/aya" }
 aya-ebpf = { git = "https://github.com/aya-rs/aya" }
@@ -21,17 +22,18 @@ cpp_demangle = "0.5"
 daemonize = "0.5"
 dynasmrt = "4.0"
 env_logger = "0.11"
-inotify = "0.11"
 jni-sys = "0.4"
 log = "0.4"
 lzma-rs = "0.3"
 memfd = "0.6"
 nix = { version = "0.31" }
+notify = "9.0.0-rc.1"
 object = "0.38"
 parking_lot = "0.12"
 once_cell = "1.21"
 once_map = "0.4"
 procfs = "0.18"
+regex-lite = "0.1"
 rkyv = "0.8"
 scopeguard = "1.2"
 strum = "0.27"

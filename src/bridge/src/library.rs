@@ -21,8 +21,8 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn new(id: &str, fd: OwnedFd) -> Result<Self> {
-        info!("dlopen library: {}, fd = {}", id, fd.as_raw_fd());
+    pub fn new(name: &str, fd: OwnedFd) -> Result<Self> {
+        info!("dlopen library: {}, fd = {}", name, fd.as_raw_fd());
 
         let info = unsafe { DlextInfo::from_raw_fd(fd.as_raw_fd()) };
         let handle = unsafe { android_dlopen_ext(c"jit-cache".as_ptr(), RTLD_NOW, &info) };
@@ -31,13 +31,13 @@ impl Library {
             let error = unsafe { CStr::from_ptr(dlerror()) };
             return Err(anyhow!(
                 "dlopen library {} failed: {}",
-                id,
+                name,
                 error.to_string_lossy()
             ));
         }
 
         Ok(Self {
-            id: id.into(),
+            id: name.into(),
             handle,
         })
     }

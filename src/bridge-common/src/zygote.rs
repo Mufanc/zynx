@@ -100,7 +100,7 @@ impl SpecializeArgs {
 #[derive(Debug, Archive, Serialize, Deserialize)]
 #[rkyv(derive(Debug))]
 pub struct LibraryList {
-    pub ids: Vec<String>,
+    pub names: Vec<String>,
 }
 
 #[repr(C)]

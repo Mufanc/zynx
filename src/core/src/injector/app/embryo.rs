@@ -1,23 +1,22 @@
 use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::{EmbryoCheckArgs, LibraryInfo, PolicyProviderManager};
+use crate::injector::app::policy::{EmbryoCheckArgs, InjectLibrary, PolicyProviderManager};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, SC_CONFIG};
+use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
 use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
 use crate::injector::ptrace::ext::jni::PtraceJniExt;
 use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
-use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::{RegSet, RemoteProcess};
 use crate::injector::trampoline::Bridge;
-use crate::injector::{misc, PAGE_SIZE};
+use crate::injector::{PAGE_SIZE, misc};
 use crate::{build_args, dynasm};
-use anyhow::{bail, Context, Result};
-use dynasmrt::aarch64::Aarch64Relocation;
+use anyhow::{Context, Result, bail};
 use dynasmrt::VecAssembler;
+use dynasmrt::aarch64::Aarch64Relocation;
 use log::{debug, info, trace, warn};
 use nix::libc::{
-    c_long, MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC,
-    PROT_READ, PROT_WRITE, RTLD_NOW,
+    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, RTLD_NOW, c_long,
 };
 use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
@@ -27,7 +26,7 @@ use scopeguard::defer;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use std::os::fd::{AsFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use syscalls::Sysno;
 use uds::UnixSeqpacketConn;
@@ -135,7 +134,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Arc<dyn LibraryInfo>>>> {
+    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Arc<InjectLibrary>>>> {
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -164,7 +163,7 @@ impl EmbryoInjector {
         &self,
         mut regs: RegSet,
         raw_args: &[c_long],
-        libs: &[Arc<dyn LibraryInfo>],
+        libs: &[Arc<InjectLibrary>],
     ) -> Result<()> {
         info!(
             "injecting process: {self}, raw_args = {raw_args:?}, libs count = {}",
@@ -354,7 +353,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn send_inject_libs(&self, conn_fd: OwnedFd, libs: &[Arc<dyn LibraryInfo>]) -> Result<()> {
+    fn send_inject_libs(&self, conn_fd: OwnedFd, libs: &[Arc<InjectLibrary>]) -> Result<()> {
         info!(
             "send inject libs: connection fd = {conn_fd:?}, libs count = {}",
             libs.len()
@@ -363,7 +362,7 @@ impl EmbryoInjector {
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
 
         let library_list = LibraryList {
-            ids: libs.iter().map(|lib| lib.id().into()).collect(),
+            names: libs.iter().map(|lib| lib.name().into()).collect(),
         };
         let data = rkyv::to_bytes::<rkyv::rancor::Error>(&library_list)?;
 

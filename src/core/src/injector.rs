@@ -1,4 +1,5 @@
 use crate::android::packages::PackageInfoService;
+use crate::injector::app::policy::PolicyProviderManager;
 use crate::monitor::{Message, Monitor};
 use crate::{daemon, monitor};
 use anyhow::{Result, bail};
@@ -52,7 +53,8 @@ pub async fn serve() -> Result<()> {
         target_names: vec![ZYGOTE_NAME.into()],
     };
 
-    PackageInfoService::init();
+    PackageInfoService::init().await?;
+    PolicyProviderManager::init().await?;
     Monitor::init(config)?;
     daemon::notify_launcher_if_needed();
 

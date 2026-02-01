@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 android_logger = { workspace = true }
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
 bytemuck = { workspace = true }
@@ -14,17 +15,18 @@ cpp_demangle = { workspace = true }
 daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
-inotify = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 lzma-rs = { workspace = true }
 memfd = { workspace = true }
 nix = { workspace = true, features = ["feature", "fs", "process", "ptrace", "resource", "signal", "socket", "uio", "user"] }
+notify = { workspace = true }
 object = { workspace = true }
 once_cell = { workspace = true }
 once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
+regex-lite = { workspace = true }
 rkyv = { workspace = true }
 scopeguard = { workspace = true }
 strum = { workspace = true }
