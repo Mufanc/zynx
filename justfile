@@ -24,5 +24,8 @@ run-emulator: build-debug
     adb shell "(su 0 killall zynx-core || true) && sleep 1"
     adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx-core"
 
+clippy:
+    cargo clippy --target aarch64-linux-android -- -A unused
+
 clean:
     cargo clean

@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::Deref;
 use std::os::fd::{AsRawFd, RawFd};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
@@ -217,10 +217,7 @@ impl PolicyProviderManager {
                 let new_decision = self.providers[index].check(args);
 
                 if matches!(new_decision, PolicyDecision::MoreInfo) {
-                    warn!(
-                        "provider {} returned MoreInfo in slow path, treating as Deny",
-                        index
-                    );
+                    warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
                     *decision = PolicyDecision::Deny;
                 } else {
                     *decision = new_decision;

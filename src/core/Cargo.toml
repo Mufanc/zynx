@@ -3,6 +3,9 @@ name = "zynx"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 android_logger = { workspace = true }
 anyhow = { workspace = true }

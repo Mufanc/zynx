@@ -3,6 +3,9 @@ name = "proc-macros"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [lib]
 proc-macro = true
 

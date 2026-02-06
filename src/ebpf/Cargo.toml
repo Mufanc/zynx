@@ -3,6 +3,9 @@ name = "zynx-ebpf"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "zynx-ebpf"
 path = "src/main.rs"

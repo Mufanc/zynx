@@ -3,6 +3,9 @@ name = "zynx-bridge-common"
 version.workspace = true
 edition.workspace = true
 
+[lints]
+workspace = true
+
 [dependencies]
 jni-sys = { workspace = true }
 nix = { workspace = true }

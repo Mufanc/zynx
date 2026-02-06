@@ -84,7 +84,7 @@ pub struct PackageInfoService {
 }
 
 impl PackageInfoService {
-    pub async fn init() -> Result<()> {
+    pub fn init() -> Result<()> {
         let packages = task::block_in_place(parse_package_list)?;
         let map = Self::build_map(packages);
 

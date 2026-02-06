@@ -53,7 +53,7 @@ pub async fn serve() -> Result<()> {
         target_names: vec![ZYGOTE_NAME.into()],
     };
 
-    PackageInfoService::init().await?;
+    PackageInfoService::init()?;
     PolicyProviderManager::init().await?;
     Monitor::init(config)?;
     daemon::notify_launcher_if_needed();

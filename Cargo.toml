@@ -7,6 +7,10 @@ default-members = ["src/bridge", "src/core"]
 edition = "2024"
 version = "1.0.0"
 
+[workspace.lints.clippy]
+unused_async = "warn"
+uninlined_format_args = "warn"
+
 [workspace.dependencies]
 android_logger = "0.15"
 anyhow = "1"
