@@ -1,13 +1,13 @@
 use crate::init_logger;
-use crate::library::Library;
+use crate::inject::Library;
 use anyhow::Result;
 use log::{debug, info};
 use nix::libc::c_long;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
 use uds::UnixSeqpacketConn;
-use zynx_bridge_common::zygote::{ArchivedLibraryList, BridgeArgs};
-use zynx_common::ext::ResultExt;
+use zynx_bridge_types::zygote::{ArchivedLibraryList, BridgeArgs};
+use zynx_utils::ext::ResultExt;
 
 #[cfg(feature = "zygisk")]
 mod zygisk {

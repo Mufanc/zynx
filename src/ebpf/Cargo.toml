@@ -13,7 +13,7 @@ path = "src/main.rs"
 [dependencies]
 aya-ebpf = { workspace = true }
 aya-log-ebpf = { workspace = true }
-zynx-ebpf-common = { path = "../ebpf-common" }
+zynx-ebpf-types = { path = "../ebpf-types" }
 
 [build-dependencies]
 which = { workspace = true }

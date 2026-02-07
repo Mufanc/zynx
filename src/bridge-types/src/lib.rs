@@ -1,2 +1,2 @@
-pub mod dlfcn;
+pub mod dlext;
 pub mod zygote;

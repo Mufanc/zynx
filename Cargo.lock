@@ -1870,10 +1870,10 @@ dependencies = [
  "syscalls",
  "tokio",
  "uds",
- "zynx-bridge-common",
- "zynx-common",
+ "zynx-bridge-types",
  "zynx-ebpf",
- "zynx-ebpf-common",
+ "zynx-ebpf-types",
+ "zynx-utils",
 ]
 
 [[package]]
@@ -1887,13 +1887,13 @@ dependencies = [
  "nix",
  "rkyv",
  "uds",
- "zynx-bridge-common",
- "zynx-common",
+ "zynx-bridge-types",
+ "zynx-utils",
  "zynx-zygisk-compat",
 ]
 
 [[package]]
-name = "zynx-bridge-common"
+name = "zynx-bridge-types"
 version = "1.0.0"
 dependencies = [
  "jni-sys",
@@ -1904,25 +1904,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "zynx-common"
-version = "1.0.0"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "zynx-ebpf"
 version = "1.0.0"
 dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
  "which",
- "zynx-ebpf-common",
+ "zynx-ebpf-types",
 ]
 
 [[package]]
-name = "zynx-ebpf-common"
+name = "zynx-ebpf-types"
 version = "1.0.0"
+
+[[package]]
+name = "zynx-utils"
+version = "1.0.0"
+dependencies = [
+ "log",
+]
 
 [[package]]
 name = "zynx-zygisk-compat"
@@ -1931,4 +1931,5 @@ dependencies = [
  "anyhow",
  "log",
  "nix",
+ "zynx-bridge-types",
 ]

@@ -36,9 +36,9 @@ strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
 uds = { workspace = true }
-zynx-bridge-common = { path = "../bridge-common" }
-zynx-common = { path = "../common" }
-zynx-ebpf-common = { path = "../ebpf-common" }
+zynx-bridge-types = { path = "../bridge-types" }
+zynx-utils = { path = "../utils" }
+zynx-ebpf-types = { path = "../ebpf-types" }
 
 [build-dependencies]
 aya-build = { workspace = true }

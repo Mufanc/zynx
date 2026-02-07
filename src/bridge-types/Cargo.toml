@@ -1,5 +1,5 @@
 [package]
-name = "zynx-bridge-common"
+name = "zynx-bridge-types"
 version.workspace = true
 edition.workspace = true
 

@@ -15,7 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task;
 use tokio::time::timeout;
-use zynx_common::ext::ResultExt;
+use zynx_utils::ext::ResultExt;
 
 pub const ZYGOTE_NAME: &str = "zygote64";
 

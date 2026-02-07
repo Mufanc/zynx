@@ -3,7 +3,7 @@ use log::info;
 use nix::libc::{RTLD_NOW, c_char, c_int};
 use std::ffi::{CStr, c_void};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use zynx_bridge_common::dlfcn::DlextInfo;
+use zynx_bridge_types::dlext::DlextInfo;
 
 unsafe extern "C" {
     fn android_dlopen_ext(

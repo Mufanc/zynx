@@ -10,3 +10,4 @@ workspace = true
 anyhow = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
+zynx-bridge-types = { path = "../bridge-types" }

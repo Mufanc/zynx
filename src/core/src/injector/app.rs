@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use log::info;
 use once_cell::sync::Lazy;
 use strum::IntoEnumIterator;
-use zynx_bridge_common::zygote::SpecializeVersion;
+use zynx_bridge_types::zygote::SpecializeVersion;
 
 mod embryo;
 pub mod policy;

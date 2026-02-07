@@ -11,7 +11,7 @@ use nix::sys::wait::WaitStatus;
 use scopeguard::defer;
 use std::fmt::Display;
 use std::ops::Deref;
-use zynx_common::ext::ResultExt;
+use zynx_utils::ext::ResultExt;
 
 #[derive(Debug)]
 pub enum RemoteFn {

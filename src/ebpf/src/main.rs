@@ -9,7 +9,7 @@ use aya_ebpf::maps::{Array, HashMap, RingBuf};
 use aya_ebpf::programs::TracePointContext;
 use aya_ebpf::{EbpfContext, helpers};
 use aya_log_ebpf::{debug, info, warn};
-use zynx_ebpf_common::Message;
+use zynx_ebpf_types::Message;
 
 const DEBUG: bool = option_env!("DEBUG_EBPF").is_some();
 const EVENT_PARAMS_OFFSET: usize = 8;

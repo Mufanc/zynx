@@ -42,7 +42,7 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
             }
         };
 
-        let library = InjectLibrary::new(path, &format!("lite::{library_name}"))?;
+        let library = InjectLibrary::new(path, &format!("liteloader::{library_name}"))?;
 
         libs.entry(package_name)
             .or_default()

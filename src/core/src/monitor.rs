@@ -16,7 +16,7 @@ use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task;
-use zynx_ebpf_common::Message as EbpfMessage;
+use zynx_ebpf_types::Message as EbpfMessage;
 
 static INSTANCE: OnceLock<Monitor> = OnceLock::new();
 

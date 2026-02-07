@@ -30,9 +30,9 @@ use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use syscalls::Sysno;
 use uds::UnixSeqpacketConn;
-use zynx_bridge_common::dlfcn::DlextInfo;
-use zynx_bridge_common::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
-use zynx_common::ext::ResultExt;
+use zynx_bridge_types::dlext::DlextInfo;
+use zynx_bridge_types::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
+use zynx_utils::ext::ResultExt;
 
 static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 

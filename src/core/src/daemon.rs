@@ -14,7 +14,7 @@ use tokio::signal::unix;
 use tokio::signal::unix::SignalKind;
 use tokio::sync::oneshot;
 use tokio::{task, time};
-use zynx_common::ext::ResultExt;
+use zynx_utils::ext::ResultExt;
 
 const ENV_LAUNCHER_PID: &str = "LAUNCHER_PID";
 
