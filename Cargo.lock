@@ -1870,6 +1870,7 @@ dependencies = [
  "syscalls",
  "tokio",
  "uds",
+ "zynx-bridge",
  "zynx-bridge-types",
  "zynx-ebpf",
  "zynx-ebpf-types",
@@ -1896,7 +1897,9 @@ dependencies = [
 name = "zynx-bridge-types"
 version = "1.0.0"
 dependencies = [
+ "anyhow",
  "jni-sys",
+ "log",
  "nix",
  "rkyv",
  "strum",
@@ -1929,6 +1932,7 @@ name = "zynx-zygisk-compat"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "jni-sys",
  "log",
  "nix",
  "zynx-bridge-types",

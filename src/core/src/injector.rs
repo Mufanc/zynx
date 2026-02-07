@@ -13,9 +13,9 @@ use procfs::process::Process;
 
 mod app;
 mod asm;
+mod bridge;
 mod misc;
 mod ptrace;
-mod trampoline;
 
 pub static PAGE_SIZE: Lazy<usize> =
     Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);

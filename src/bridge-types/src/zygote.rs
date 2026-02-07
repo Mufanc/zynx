@@ -99,6 +99,15 @@ impl SpecializeArgs {
 
 #[derive(Debug, Archive, Serialize, Deserialize)]
 #[rkyv(derive(Debug))]
+pub enum LibraryProvider {
+    LiteLoader,
+
+    #[cfg(feature = "zygisk")]
+    Zygisk,
+}
+
+#[derive(Debug, Archive, Serialize, Deserialize)]
+#[rkyv(derive(Debug))]
 pub struct LibraryList {
     pub names: Vec<String>,
 }

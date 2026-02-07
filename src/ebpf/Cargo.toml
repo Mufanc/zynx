@@ -3,9 +3,6 @@ name = "zynx-ebpf"
 version.workspace = true
 edition.workspace = true
 
-[lints]
-workspace = true
-
 [[bin]]
 name = "zynx-ebpf"
 path = "src/main.rs"
@@ -17,3 +14,6 @@ zynx-ebpf-types = { path = "../ebpf-types" }
 
 [build-dependencies]
 which = { workspace = true }
+
+[lints]
+workspace = true

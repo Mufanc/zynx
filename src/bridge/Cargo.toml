@@ -10,8 +10,7 @@ workspace = true
 crate-type = ["cdylib"]
 
 [features]
-default = ["zygisk"]
-zygisk = ["zynx-zygisk-compat"]
+zygisk = ["zynx-bridge-types/zygisk", "zynx-zygisk-compat"]
 
 [dependencies]
 android_logger = { workspace = true }

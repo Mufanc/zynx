@@ -3,8 +3,8 @@ name = "zynx-utils"
 version.workspace = true
 edition.workspace = true
 
-[lints]
-workspace = true
-
 [dependencies]
 log = { workspace = true }
+
+[lints]
+workspace = true

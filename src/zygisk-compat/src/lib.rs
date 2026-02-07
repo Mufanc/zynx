@@ -1,3 +1,6 @@
+mod abi;
+mod module;
+
 use anyhow::Result;
 use nix::libc::c_long;
 

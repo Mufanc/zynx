@@ -1,11 +1,11 @@
 use crate::init_logger;
-use crate::inject::Library;
 use anyhow::Result;
 use log::{debug, info};
 use nix::libc::c_long;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
 use uds::UnixSeqpacketConn;
+use zynx_bridge_types::dlfcn::Library;
 use zynx_bridge_types::zygote::{ArchivedLibraryList, BridgeArgs};
 use zynx_utils::ext::ResultExt;
 
@@ -38,7 +38,7 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
             .names
             .iter()
             .zip(fds)
-            .map(|(name, fd)| Library::new(name, unsafe { OwnedFd::from_raw_fd(fd) }))
+            .map(|(name, fd)| Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }))
             .collect();
 
         drop(library_list); // Todo: zygisk compatible api?

@@ -3,9 +3,6 @@ name = "proc-macros"
 version.workspace = true
 edition.workspace = true
 
-[lints]
-workspace = true
-
 [lib]
 proc-macro = true
 
@@ -13,3 +10,6 @@ proc-macro = true
 proc-macro2 = "1"
 quote = "1"
 syn = { version = "2", features = ["full"] }
+
+[lints]
+workspace = true

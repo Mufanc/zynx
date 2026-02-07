@@ -3,8 +3,9 @@ name = "zynx"
 version.workspace = true
 edition.workspace = true
 
-[lints]
-workspace = true
+[features]
+default = ["zygisk"]
+zygisk = ["zynx-bridge/zygisk", "zynx-bridge-types/zygisk"]
 
 [dependencies]
 android_logger = { workspace = true }
@@ -36,6 +37,7 @@ strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
 uds = { workspace = true }
+zynx-bridge = { path = "../bridge" }
 zynx-bridge-types = { path = "../bridge-types" }
 zynx-utils = { path = "../utils" }
 zynx-ebpf-types = { path = "../ebpf-types" }
@@ -56,3 +58,6 @@ aya-build = { workspace = true }
 # workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
 # features.
 zynx-ebpf = { path = "../ebpf" }
+
+[lints]
+workspace = true

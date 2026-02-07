@@ -1,4 +1,7 @@
 mod liteloader;
+#[cfg(feature = "zygisk")]
+mod zygisk;
+
 use crate::android::packages::PackageInfoLocked;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 use anyhow::{Result, anyhow};
@@ -14,6 +17,7 @@ use std::ops::Deref;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use zynx_bridge_types::zygote::LibraryProvider;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
@@ -172,7 +176,8 @@ pub struct PolicyProviderManager {
 
 impl PolicyProviderManager {
     pub async fn init() -> Result<()> {
-        let providers: Vec<Box<dyn PolicyProvider>> = vec![Box::new(LiteLoaderPolicyProvider::default())];
+        let providers: Vec<Box<dyn PolicyProvider>> =
+            vec![Box::new(LiteLoaderPolicyProvider::default())];
 
         for provider in &providers {
             provider.init().await?;

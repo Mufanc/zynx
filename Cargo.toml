@@ -7,10 +7,6 @@ default-members = ["src/bridge", "src/core"]
 edition = "2024"
 version = "1.0.0"
 
-[workspace.lints.clippy]
-unused_async = "warn"
-uninlined_format_args = "warn"
-
 [workspace.dependencies]
 android_logger = "0.15"
 anyhow = "1"
@@ -46,6 +42,10 @@ syscalls = { version = "0.8" }
 tokio = { version = "1", features = ["full"] }
 uds = "0.4.2"
 which = "8.0"
+
+[workspace.lints.clippy]
+unused_async = "warn"
+uninlined_format_args = "warn"
 
 [profile.release.package.zynx-ebpf]
 codegen-units = 1
