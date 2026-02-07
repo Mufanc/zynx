@@ -9,6 +9,11 @@ use uds::UnixSeqpacketConn;
 use zynx_bridge_common::zygote::{ArchivedLibraryList, BridgeArgs};
 use zynx_common::ext::ResultExt;
 
+#[cfg(feature = "zygisk")]
+mod zygisk {
+    pub use zynx_zygisk_compat::*;
+}
+
 fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()> {
     if bridge_args.conn_fd >= 0 {
         info!("connection fd: {}", bridge_args.conn_fd);

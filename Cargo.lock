@@ -1452,9 +1452,9 @@ dependencies = [
 
 [[package]]
 name = "syscalls"
-version = "0.7.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90db46b5b4962319605d435986c775ea45a0ad2561c09e1d5372b89afeb49cf4"
+checksum = "81c645a4de0d803ced6ef0388a2646aa1ef8467173b5d59a2c33c88de4ab76e7"
 dependencies = [
  "serde",
  "serde_repr",
@@ -1889,6 +1889,7 @@ dependencies = [
  "uds",
  "zynx-bridge-common",
  "zynx-common",
+ "zynx-zygisk-compat",
 ]
 
 [[package]]
@@ -1922,3 +1923,12 @@ dependencies = [
 [[package]]
 name = "zynx-ebpf-common"
 version = "1.0.0"
+
+[[package]]
+name = "zynx-zygisk-compat"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "log",
+ "nix",
+]

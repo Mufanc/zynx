@@ -9,6 +9,10 @@ workspace = true
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["zygisk"]
+zygisk = ["zynx-zygisk-compat"]
+
 [dependencies]
 android_logger = { workspace = true }
 anyhow = { workspace = true }
@@ -19,3 +23,4 @@ rkyv = { workspace = true }
 uds = { workspace = true }
 zynx-bridge-common = { path = "../bridge-common" }
 zynx-common = { path = "../common" }
+zynx-zygisk-compat = { path = "../zygisk-compat", optional = true }
