@@ -1,6 +1,6 @@
-mod lite;
+mod liteloader;
 use crate::android::packages::PackageInfoLocked;
-use crate::injector::app::policy::lite::LitePolicyProvider;
+use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use log::warn;
@@ -172,7 +172,7 @@ pub struct PolicyProviderManager {
 
 impl PolicyProviderManager {
     pub async fn init() -> Result<()> {
-        let providers: Vec<Box<dyn PolicyProvider>> = vec![Box::new(LitePolicyProvider::default())];
+        let providers: Vec<Box<dyn PolicyProvider>> = vec![Box::new(LiteLoaderPolicyProvider::default())];
 
         for provider in &providers {
             provider.init().await?;

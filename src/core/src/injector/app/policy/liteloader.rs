@@ -53,12 +53,12 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
 }
 
 #[derive(Default)]
-pub struct LitePolicyProvider {
+pub struct LiteLoaderPolicyProvider {
     // a package name -> libraries map
     libs: LibrariesArc,
 }
 
-impl LitePolicyProvider {
+impl LiteLoaderPolicyProvider {
     fn reload_libs(libs: LibrariesArc) {
         match reload_libs() {
             Ok(map) => {
@@ -82,7 +82,7 @@ impl LitePolicyProvider {
 }
 
 #[async_trait]
-impl PolicyProvider for LitePolicyProvider {
+impl PolicyProvider for LiteLoaderPolicyProvider {
     async fn init(&self) -> Result<()> {
         match fs::metadata(&*LITE_LIBRARIES_DIR) {
             Ok(meta) => {
