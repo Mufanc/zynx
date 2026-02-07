@@ -1,7 +1,7 @@
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use nix::libc::{c_int, c_long};
-use rkyv::{Archive, Deserialize, Serialize};
 use strum_macros::{AsRefStr, EnumIter};
+use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq, AsRefStr, EnumIter)]
 #[repr(u8)]
@@ -95,24 +95,67 @@ impl SpecializeArgs {
             mount_sysprop_overrides: require!(V),
         }
     }
+
+    #[allow(unused_mut)]
+    #[allow(unused_variables)]
+    #[allow(unused_assignments)]
+    pub fn write_back_to_slice(&self, args: &mut [c_long]) {
+        let mut index = 0;
+
+        macro_rules! put {
+            ($member: ident) => {
+                {
+                    args[index] = self.$member as _;
+                    index += 1;
+                }
+            };
+            ($member: ident, $version: ident) => {
+                if self.version >= crate::zygote::SpecializeVersion::$version {
+                    put!($member)
+                }
+            };
+        }
+
+        put!(env);
+        put!(uid);
+        put!(gid);
+        put!(gids);
+        put!(runtime_flags);
+        put!(rlimits);
+        put!(permitted_capabilities);
+        put!(effective_capabilities);
+        put!(bounding_capabilities);
+        put!(mount_external, V);
+        put!(managed_se_info);
+        put!(managed_nice_name);
+        put!(is_system_server);
+        put!(is_child_zygote);
+        put!(managed_instruction_set);
+        put!(managed_app_data_dir);
+        put!(is_top_app);
+        put!(pkg_data_info_list);
+        put!(allowlisted_data_info_list);
+        put!(mount_data_dirs);
+        put!(mount_storage_dirs);
+        put!(mount_sysprop_overrides, V);
+    }
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize)]
-#[rkyv(derive(Debug))]
-pub enum LibraryProvider {
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, SchemaRead, SchemaWrite)]
+pub enum ProviderType {
     LiteLoader,
 
     #[cfg(feature = "zygisk")]
     Zygisk,
 }
 
-#[derive(Debug, Archive, Serialize, Deserialize)]
-#[rkyv(derive(Debug))]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct LibraryList {
-    pub names: Vec<String>,
+    pub info: Vec<(String, ProviderType)>,
 }
 
 #[repr(C)]
 pub struct BridgeArgs {
     pub conn_fd: c_int,
+    pub specialize_version: SpecializeVersion,
 }

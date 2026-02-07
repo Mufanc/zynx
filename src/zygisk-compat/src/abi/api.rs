@@ -67,6 +67,7 @@ impl ApiAbiSpec {
 pub struct ApiAbi {
     pub base: ApiAbiBase,
     pub spec: MaybeUninit<ApiAbiSpec>,
+    pub ready: bool,
 }
 
 impl ApiAbi {
@@ -77,6 +78,7 @@ impl ApiAbi {
                 register_module: ApiAbi::register,
             },
             spec: MaybeUninit::zeroed(),
+            ready: false,
         }
     }
 
@@ -99,6 +101,7 @@ impl ApiAbi {
         }
 
         api.spec = MaybeUninit::new(ApiAbiSpec::new(module.version));
+        api.ready = true;
 
         true
     }

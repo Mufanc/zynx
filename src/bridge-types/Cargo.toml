@@ -11,9 +11,9 @@ anyhow = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
-rkyv = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
+wincode = { workspace = true, features = ["derive"] }
 
 [lints]
 workspace = true

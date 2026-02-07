@@ -15,6 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task;
+use zynx_bridge_types::zygote::ProviderType;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.so$").unwrap());
@@ -42,7 +43,11 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
             }
         };
 
-        let library = InjectLibrary::new(path, &format!("liteloader::{library_name}"))?;
+        let library = InjectLibrary::new(
+            path,
+            &format!("liteloader::{library_name}"),
+            ProviderType::LiteLoader,
+        )?;
 
         libs.entry(package_name)
             .or_default()

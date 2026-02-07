@@ -1,4 +1,6 @@
 use crate::abi::api::ApiAbi;
+use crate::abi::args::app::AppSpecializeArgs;
+use crate::abi::args::server::ServerSpecializeArgs;
 use crate::abi::flags::ZygiskOption;
 use crate::abi::module::ModuleAbi;
 use anyhow::Result;
@@ -8,6 +10,7 @@ use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::{mem, ptr};
 use zynx_bridge_types::dlfcn::Library;
+use zynx_bridge_types::zygote::SpecializeArgs;
 
 pub type PinnedZygiskModule = Pin<Box<ZygiskModule>>;
 
@@ -40,6 +43,36 @@ impl ZygiskModule {
         }
 
         Ok(instance)
+    }
+
+    pub fn call_entry(&self, env: JNIEnv) -> bool {
+        (self.entry_fn)(&self.api, env);
+        self.api.ready
+    }
+
+    pub fn call_specialize_pre(&self, args: &mut SpecializeArgs) {
+        let module = unsafe { &*self.module };
+
+        if args.is_system_server {
+            let args = ServerSpecializeArgs::new(args, module.version);
+            (module.server_pre)(module.remote_impl, &args);
+        } else {
+            let args = AppSpecializeArgs::new(args, module.version);
+            (module.app_pre)(module.remote_impl, &args);
+        }
+    }
+
+    pub fn call_specialize_post(&self, args: &SpecializeArgs) {
+        let args = &mut args.clone();
+        let module = unsafe { &*self.module };
+
+        if args.is_system_server {
+            let args = ServerSpecializeArgs::new(args, module.version);
+            (module.server_pos)(module.remote_impl, &args);
+        } else {
+            let args = AppSpecializeArgs::new(args, module.version);
+            (module.app_pos)(module.remote_impl, &args);
+        }
     }
 }
 

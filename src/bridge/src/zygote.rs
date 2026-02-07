@@ -1,20 +1,24 @@
 use crate::init_logger;
+use crate::injector::ProviderHandlerRegistry;
 use anyhow::Result;
 use log::{debug, info};
 use nix::libc::c_long;
+use std::cell::RefCell;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
 use uds::UnixSeqpacketConn;
 use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::zygote::{ArchivedLibraryList, BridgeArgs};
+use zynx_bridge_types::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
 use zynx_utils::ext::ResultExt;
 
-#[cfg(feature = "zygisk")]
-mod zygisk {
-    pub use zynx_zygisk_compat::*;
+thread_local! {
+    static G_ARGS: RefCell<Option<SpecializeArgs>> = RefCell::default();
+    static G_HANDLER: RefCell<Option<ProviderHandlerRegistry>> = RefCell::default();
 }
 
 fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()> {
+    let mut args_struct = SpecializeArgs::new(&mut *args, bridge_args.specialize_version);
+
     if bridge_args.conn_fd >= 0 {
         info!("connection fd: {}", bridge_args.conn_fd);
 
@@ -33,21 +37,44 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
 
         conn.recv_fds(&mut buffer, &mut fds)?;
 
-        let library_list = rkyv::access::<ArchivedLibraryList, rkyv::rancor::Error>(&buffer)?;
+        let library_list: LibraryList = wincode::deserialize(&buffer)?;
         let library_list: Vec<_> = library_list
-            .names
-            .iter()
+            .info
+            .into_iter()
             .zip(fds)
-            .map(|(name, fd)| Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }))
+            .flat_map(|((name, provider_type), fd)| {
+                Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }, provider_type)
+                    .inspect_log_error()
+            })
             .collect();
 
-        drop(library_list); // Todo: zygisk compatible api?
+        let handler = ProviderHandlerRegistry::new();
+
+        handler.dispatch_pre(&mut args_struct, library_list);
+
+        G_HANDLER.with(|cell| {
+            *cell.borrow_mut() = Some(handler);
+        });
     }
+
+    args_struct.write_back_to_slice(args);
+
+    G_ARGS.with(|cell| {
+        *cell.borrow_mut() = Some(args_struct);
+    });
 
     Ok(())
 }
 
 fn on_specialize_post() -> Result<()> {
+    G_ARGS.with(|args| {
+        G_HANDLER.with(|handler| {
+            if let (Some(args), Some(handler)) = (args.take(), handler.take()) {
+                handler.dispatch_post(&args)
+            }
+        });
+    });
+
     Ok(())
 }
 

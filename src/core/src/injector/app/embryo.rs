@@ -201,6 +201,7 @@ impl EmbryoInjector {
 
         let bridge_args = BridgeArgs {
             conn_fd: conn_fd_remote.unwrap_or(-1),
+            specialize_version: SC_CONFIG.ver,
         };
 
         dynasm!(ops
@@ -359,14 +360,18 @@ impl EmbryoInjector {
             libs.len()
         );
 
+        let mut library_info = Vec::with_capacity(libs.len());
+        let mut library_fds = Vec::with_capacity(libs.len());
+
+        for lib in libs {
+            library_info.push((lib.name().into(), lib.provider_type()));
+            library_fds.push(lib.as_raw_fd());
+        }
+
+        let library_list = LibraryList { info: library_info };
+        let data = wincode::serialize(&library_list)?;
+
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
-
-        let library_list = LibraryList {
-            names: libs.iter().map(|lib| lib.name().into()).collect(),
-        };
-        let data = rkyv::to_bytes::<rkyv::rancor::Error>(&library_list)?;
-
-        let library_fds: Vec<_> = libs.iter().map(|lib| lib.as_raw_fd()).collect();
 
         conn.send(bytemuck::bytes_of(&[data.len(), library_fds.len()]))?;
         conn.send_fds(&data, &library_fds)?;

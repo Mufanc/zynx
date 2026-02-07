@@ -31,12 +31,12 @@ once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
 regex-lite = { workspace = true }
-rkyv = { workspace = true }
 scopeguard = { workspace = true }
 strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
 uds = { workspace = true }
+wincode = { workspace = true }
 zynx-bridge = { path = "../bridge" }
 zynx-bridge-types = { path = "../bridge-types" }
 zynx-utils = { path = "../utils" }

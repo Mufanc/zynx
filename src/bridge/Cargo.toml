@@ -18,8 +18,8 @@ anyhow = { workspace = true }
 bytemuck = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["mman", "user"] }
-rkyv = { workspace = true }
 uds = { workspace = true }
+wincode = { workspace = true }
 zynx-bridge-types = { path = "../bridge-types" }
 zynx-utils = { path = "../utils" }
 zynx-zygisk-compat = { path = "../zygisk-compat", optional = true }

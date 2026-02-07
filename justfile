@@ -25,7 +25,7 @@ run-emulator: build-debug
     adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx"
 
 clippy:
-    cargo clippy --target aarch64-linux-android -- -A unused
+    cargo clippy --target aarch64-linux-android
 
 clean:
     cargo clean

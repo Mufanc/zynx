@@ -8,7 +8,7 @@ anyhow = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
-zynx-bridge-types = { path = "../bridge-types" }
+zynx-bridge-types = { path = "../bridge-types", features = ["zygisk"] }
 
 [lints]
 workspace = true

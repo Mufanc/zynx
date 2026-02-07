@@ -1,5 +1,6 @@
 use log::LevelFilter;
 
+mod injector;
 mod zygote;
 
 fn init_logger() {

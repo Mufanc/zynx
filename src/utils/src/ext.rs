@@ -4,6 +4,7 @@ use std::fmt::Debug;
 pub trait ResultExt<T> {
     fn ok_or_warn(self) -> Option<T>;
     fn log_if_error(self);
+    fn inspect_log_error(self) -> Self;
 }
 
 impl<T, E: Debug> ResultExt<T> for Result<T, E> {
@@ -15,5 +16,13 @@ impl<T, E: Debug> ResultExt<T> for Result<T, E> {
         if let Err(err) = self {
             error!("error: {err:?}")
         }
+    }
+
+    fn inspect_log_error(self) -> Self {
+        if let Err(err) = &self {
+            error!("error: {err:?}")
+        }
+
+        self
     }
 }

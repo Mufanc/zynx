@@ -17,7 +17,7 @@ use std::ops::Deref;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use zynx_bridge_types::zygote::LibraryProvider;
+use zynx_bridge_types::zygote::ProviderType;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
@@ -105,10 +105,15 @@ impl<'a> Deref for EmbryoCheckArgs<'a> {
 pub struct InjectLibrary {
     name: String,
     fd: Memfd,
+    provider_type: ProviderType,
 }
 
 impl InjectLibrary {
-    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
+    pub fn new<P: AsRef<Path>, N: Display>(
+        path: P,
+        name: &N,
+        provider_type: ProviderType,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let name = format!("zynx-inject::{name}");
 
@@ -129,16 +134,24 @@ impl InjectLibrary {
 
         // Todo: setfilecon
 
-        Ok(Self { name, fd })
+        Ok(Self {
+            name,
+            fd,
+            provider_type,
+        })
     }
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P, provider_type: ProviderType) -> Result<Self> {
         let path = path.as_ref();
 
-        Self::new(path, &path.display())
+        Self::new(path, &path.display(), provider_type)
     }
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn provider_type(&self) -> ProviderType {
+        self.provider_type
     }
 }
 
@@ -170,22 +183,29 @@ pub trait PolicyProvider: Send + Sync {
     fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
 }
 
+#[derive(Default)]
 pub struct PolicyProviderManager {
     providers: Vec<Box<dyn PolicyProvider>>,
 }
 
 impl PolicyProviderManager {
     pub async fn init() -> Result<()> {
-        let providers: Vec<Box<dyn PolicyProvider>> =
-            vec![Box::new(LiteLoaderPolicyProvider::default())];
+        let mut instance = Self::default();
 
-        for provider in &providers {
-            provider.init().await?;
-        }
+        instance.register::<LiteLoaderPolicyProvider>().await?;
 
         POLICY_PROVIDER_MANAGER
-            .set(Self { providers })
+            .set(instance)
             .map_err(|_| anyhow!("duplicate called"))?;
+
+        Ok(())
+    }
+
+    pub async fn register<P: PolicyProvider + Default + 'static>(&mut self) -> Result<()> {
+        let provider = P::default();
+
+        provider.init().await?;
+        self.providers.push(Box::new(provider));
 
         Ok(())
     }
