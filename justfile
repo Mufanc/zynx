@@ -19,10 +19,10 @@ build-release:
         --release
 
 run-emulator: build-debug
-    adb push target/aarch64-linux-android/debug/zynx /data/local/tmp/zynx-core
-    adb shell "chmod +x /data/local/tmp/zynx-core"
-    adb shell "(su 0 killall zynx-core || true) && sleep 1"
-    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx-core"
+    adb push target/aarch64-linux-android/debug/zynx /data/local/tmp/zynx
+    adb shell "chmod +x /data/local/tmp/zynx"
+    adb shell "(su 0 killall zynx || true) && sleep 1"
+    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx"
 
 clippy:
     cargo clippy --target aarch64-linux-android -- -A unused

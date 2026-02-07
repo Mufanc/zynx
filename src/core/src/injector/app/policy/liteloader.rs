@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task;
 
-static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/local/tmp/zynx".into());
+static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.so$").unwrap());
 
 type LibrariesArc = Arc<RwLock<HashMap<String, Vec<Arc<InjectLibrary>>>>>;
