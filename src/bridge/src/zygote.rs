@@ -23,7 +23,7 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
         info!("connection fd: {}", bridge_args.conn_fd);
 
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(bridge_args.conn_fd) };
-        let mut buffer = [0u8; 16];
+        let mut buffer = [0u8; size_of::<[usize; 2]>()];
 
         conn.recv(&mut buffer)?;
 

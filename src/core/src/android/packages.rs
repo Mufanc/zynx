@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
 static PACKAGE_INFO_SERVICE: OnceLock<PackageInfoService> = OnceLock::new();
 
-pub type PackageInfoLocked<'a> = MappedRwLockReadGuard<'a, [PackageInfo]>;
+pub type PackageInfoListLocked<'a> = MappedRwLockReadGuard<'a, [PackageInfo]>;
 
 #[derive(Clone, Debug)]
 pub struct PackageInfo {
@@ -120,7 +120,7 @@ impl PackageInfoService {
         PACKAGE_INFO_SERVICE.wait()
     }
 
-    pub fn query(&self, uid: Uid) -> Option<PackageInfoLocked<'_>> {
+    pub fn query(&self, uid: Uid) -> Option<PackageInfoListLocked<'_>> {
         let lock = self.data.read();
         RwLockReadGuard::try_map(lock, |map| map.get(&uid).map(|v| v.as_slice())).ok()
     }

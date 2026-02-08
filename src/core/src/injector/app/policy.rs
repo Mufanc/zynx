@@ -2,7 +2,7 @@ mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
 
-use crate::android::packages::PackageInfoLocked;
+use crate::android::packages::PackageInfoListLocked;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -27,7 +27,7 @@ pub struct EmbryoCheckArgsFast<'a> {
     pub gid: Gid,
     pub is_system_server: bool,
     pub is_child_zygote: bool,
-    pub package_info: Option<PackageInfoLocked<'a>>,
+    pub package_info: Option<PackageInfoListLocked<'a>>,
 }
 
 #[allow(unused)]
@@ -56,7 +56,7 @@ impl<'a> EmbryoCheckArgs<'a> {
         gid: Gid,
         is_system_server: bool,
         is_child_zygote: bool,
-        package_info: Option<PackageInfoLocked<'a>>,
+        package_info: Option<PackageInfoListLocked<'a>>,
     ) -> Self {
         EmbryoCheckArgs::Fast(EmbryoCheckArgsFast {
             uid,
