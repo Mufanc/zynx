@@ -18,5 +18,12 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     aya_build::build_ebpf([ebpf_package], Toolchain::default())?;
 
+    let proto_src = concat!(env!("CARGO_MANIFEST_DIR"), "/proto");
+    let proto_files: Vec<_> = glob::glob(&format!("{proto_src}/*.proto"))?
+        .flatten()
+        .collect();
+
+    prost_build::compile_protos(&proto_files, &[proto_src])?;
+
     Ok(())
 }

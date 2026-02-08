@@ -22,6 +22,7 @@ static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.s
 
 type LibrariesArc = Arc<RwLock<HashMap<String, Vec<Arc<InjectLibrary>>>>>;
 
+// Todo: async-fs
 fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
     let mut libs: HashMap<String, Vec<Arc<InjectLibrary>>> = HashMap::new();
 
@@ -121,7 +122,7 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
         Ok(())
     }
 
-    fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
         let libs = self.libs.read();
         let inject_libs = PackageInfoService::instance()
             .query(args.uid)

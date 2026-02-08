@@ -103,12 +103,10 @@ impl SpecializeArgs {
         let mut index = 0;
 
         macro_rules! put {
-            ($member: ident) => {
-                {
-                    args[index] = self.$member as _;
-                    index += 1;
-                }
-            };
+            ($member: ident) => {{
+                args[index] = self.$member as _;
+                index += 1;
+            }};
             ($member: ident, $version: ident) => {
                 if self.version >= crate::zygote::SpecializeVersion::$version {
                     put!($member)

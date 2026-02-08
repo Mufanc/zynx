@@ -29,6 +29,7 @@ use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
 use std::sync::Arc;
 use syscalls::Sysno;
+use tokio::runtime::Handle;
 use uds::UnixSeqpacketConn;
 use zynx_bridge_types::dlfcn::DlextInfo;
 use zynx_bridge_types::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
@@ -95,7 +96,8 @@ impl EmbryoInjector {
 
                     debug!("{self} specialize args: {args:?}");
 
-                    let inject_libs = self.check_process(&args)?;
+                    let handle = Handle::current();
+                    let inject_libs = handle.block_on(self.check_process(&args))?;
 
                     if let Some(libs) = inject_libs {
                         self.do_inject(regs, &raw_args, &libs)?;
@@ -134,7 +136,10 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Arc<InjectLibrary>>>> {
+    async fn check_process(
+        &self,
+        args: &SpecializeArgs,
+    ) -> Result<Option<Vec<Arc<InjectLibrary>>>> {
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -146,14 +151,14 @@ impl EmbryoInjector {
         );
 
         let manager = PolicyProviderManager::instance();
-        let mut result = manager.check(&fast_args);
+        let mut result = manager.check(&fast_args).await;
 
         if result.more_info {
             let slow_args = fast_args.into_slow(
                 self.read_jstring(args.env, args.managed_nice_name)?,
                 self.read_jstring(args.env, args.managed_app_data_dir)?,
             );
-            manager.recheck_slow(&slow_args, &mut result);
+            manager.recheck_slow(&slow_args, &mut result).await;
         }
 
         Ok(manager.aggregate(&result.decisions))

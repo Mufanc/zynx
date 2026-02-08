@@ -19,6 +19,7 @@ cpp_demangle = { workspace = true }
 daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
+futures = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 lzma-rs = { workspace = true }
@@ -30,6 +31,7 @@ once_cell = { workspace = true }
 once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
+prost = { workspace = true }
 regex-lite = { workspace = true }
 scopeguard = { workspace = true }
 strum = { workspace = true }
@@ -44,6 +46,8 @@ zynx-ebpf-types = { path = "../ebpf-types" }
 
 [build-dependencies]
 aya-build = { workspace = true }
+glob = { workspace = true }
+prost-build = { workspace = true }
 
 # TODO(https://github.com/rust-lang/cargo/issues/12375): this should be an artifact dependency, but
 # it's not possible to tell cargo to use `-Z build-std` to build it. We cargo-in-cargo in the build

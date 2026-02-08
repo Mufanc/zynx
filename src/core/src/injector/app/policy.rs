@@ -6,6 +6,7 @@ use crate::android::packages::PackageInfoListLocked;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use futures::future;
 use log::warn;
 use memfd::{FileSeal, Memfd, MemfdOptions};
 use nix::unistd::{Gid, Uid};
@@ -20,6 +21,10 @@ use std::sync::{Arc, OnceLock};
 use zynx_bridge_types::zygote::ProviderType;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
+
+pub mod proto {
+    include!(concat!(env!("OUT_DIR"), "/zynx_policy.rs"));
+}
 
 #[allow(unused)]
 pub struct EmbryoCheckArgsFast<'a> {
@@ -180,7 +185,7 @@ pub trait PolicyProvider: Send + Sync {
         Ok(())
     }
 
-    fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
+    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
 }
 
 #[derive(Default)]
@@ -214,19 +219,13 @@ impl PolicyProviderManager {
         POLICY_PROVIDER_MANAGER.wait()
     }
 
-    pub fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
-        let mut decisions = Vec::with_capacity(self.providers.len());
-        let mut more_info = false;
+    pub async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
+        let futures: Vec<_> = self.providers.iter().map(|p| p.check(args)).collect();
 
-        for provider in &self.providers {
-            let decision = provider.check(args);
-
-            if matches!(decision, PolicyDecision::MoreInfo) {
-                more_info = true;
-            }
-
-            decisions.push(decision);
-        }
+        let decisions = future::join_all(futures).await;
+        let more_info = decisions
+            .iter()
+            .any(|d| matches!(d, PolicyDecision::MoreInfo));
 
         PolicyDecisions {
             decisions,
@@ -234,19 +233,30 @@ impl PolicyProviderManager {
         }
     }
 
-    pub fn recheck_slow(&self, args: &EmbryoCheckArgs<'_>, result: &mut PolicyDecisions) {
+    pub async fn recheck_slow(&self, args: &EmbryoCheckArgs<'_>, result: &mut PolicyDecisions) {
         result.more_info = false;
 
-        for (index, decision) in result.decisions.iter_mut().enumerate() {
-            if matches!(decision, PolicyDecision::MoreInfo) {
-                let new_decision = self.providers[index].check(args);
+        let recheck_indices: Vec<usize> = result
+            .decisions
+            .iter()
+            .enumerate()
+            .filter(|(_, pdc)| matches!(pdc, PolicyDecision::MoreInfo))
+            .map(|(i, _)| i)
+            .collect();
 
-                if matches!(new_decision, PolicyDecision::MoreInfo) {
-                    warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
-                    *decision = PolicyDecision::Deny;
-                } else {
-                    *decision = new_decision;
-                }
+        let futures: Vec<_> = recheck_indices
+            .iter()
+            .map(|&i| self.providers[i].check(args))
+            .collect();
+
+        let new_decisions = future::join_all(futures).await;
+
+        for (&index, new_decision) in recheck_indices.iter().zip(new_decisions) {
+            if matches!(new_decision, PolicyDecision::MoreInfo) {
+                warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
+                result.decisions[index] = PolicyDecision::Deny;
+            } else {
+                result.decisions[index] = new_decision;
             }
         }
     }
