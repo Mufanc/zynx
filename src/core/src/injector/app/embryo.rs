@@ -37,9 +37,18 @@ use zynx_utils::ext::ResultExt;
 
 static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 
+/// Handles injection into a newly forked process (embryo) before it specializes
+/// into a specific app. Works by:
+/// 1. Installing a software breakpoint at the specialize function
+/// 2. Waiting for the embryo to hit the breakpoint (SIGTRAP)
+/// 3. Checking policy to decide whether injection is needed
+/// 4. If yes, assembling and deploying a trampoline that loads the bridge
+///    library, calls pre/post hooks around the original specialize function,
+///    and cleans itself up afterwards
 pub struct EmbryoInjector {
     tracee: RemoteProcess,
     maps: ZygoteMaps,
+    /// Address of the SpecializeCommon function in the remote process
     specialize_fn: usize,
 }
 
@@ -60,10 +69,13 @@ impl EmbryoInjector {
         }
     }
 
+    /// Main entry point: installs a breakpoint, waits for it to be hit,
+    /// then decides whether to inject into the embryo process.
     pub fn start(&self) -> Result<()> {
-        // install swbp
+        // Install a software breakpoint at the specialize function entry
         self.poke_data_ignore_perm(self.specialize_fn, &SC_BRK)?;
 
+        // Attach to the process via PTRACE_SEIZE and resume it
         self.seize()?;
         self.kill(Signal::SIGCONT)?;
 
@@ -71,6 +83,7 @@ impl EmbryoInjector {
             self.detach(None).log_if_error();
         }
 
+        // Event loop: wait for the breakpoint or process termination
         loop {
             let status = self.wait()?;
 
@@ -85,23 +98,30 @@ impl EmbryoInjector {
                     warn!("embryo killed by {sig}");
                     break;
                 }
+                // SIGTRAP means the breakpoint was hit (specialize function called)
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
+                    // Capture registers and read the specialize function arguments
                     let regs = self.get_regs()?;
                     let mut raw_args = vec![0; SC_CONFIG.args_cnt];
 
                     self.get_args(&mut raw_args)?;
+                    // Restore the original code at the breakpoint site
                     self.restore_swbp()?;
 
+                    // Parse the raw args into a structured form
                     let args = SpecializeArgs::new(&raw_args, SC_CONFIG.ver);
 
                     debug!("{self} specialize args: {args:?}");
 
+                    // Query policy providers to determine if injection is needed
                     let handle = Handle::current();
                     let inject_libs = handle.block_on(self.check_process(&args))?;
 
                     if let Some(libs) = inject_libs {
+                        // Injection required: deploy trampoline and inject libraries
                         self.do_inject(regs, &raw_args, &libs)?;
                     } else {
+                        // No injection needed: just restore registers and let it continue
                         self.set_regs(&regs)?;
                     }
 
@@ -110,6 +130,7 @@ impl EmbryoInjector {
                 _ => {}
             }
 
+            // Forward any pending signals and continue the tracee
             self.cont(status.sig())?;
         }
 
@@ -164,6 +185,18 @@ impl EmbryoInjector {
         Ok(manager.aggregate(&result.decisions))
     }
 
+    /// Core injection routine. Assembles an AArch64 trampoline in the remote
+    /// process that performs the following steps:
+    ///
+    /// 1. Save the original specialize args (x0-x7) on the stack
+    /// 2. Load the bridge library via android_dlopen_ext (using a memfd)
+    /// 3. Close the bridge fd (no longer needed after dlopen)
+    /// 4. Resolve `specialize_pre` and `specialize_post` hook symbols via dlsym
+    /// 5. Call the pre-hook with the saved args and bridge configuration
+    /// 6. Replace LR so that SpecializeCommon returns to our trampoline
+    /// 7. Restore args and tail-call the original SpecializeCommon
+    /// 8. On return (via trampoline): call the post-hook
+    /// 9. Clean up by munmap-ing the trampoline and returning to the real caller
     fn do_inject(
         &self,
         mut regs: RegSet,
@@ -175,6 +208,9 @@ impl EmbryoInjector {
             libs.len()
         );
 
+        // Todo: selinux check execmem
+
+        // Allocate RWX memory in the remote process for the trampoline code
         let trampoline_addr = self.mmap_ex(
             MmapOptions::new(
                 *TRAMPOLINE_SIZE,
@@ -183,8 +219,13 @@ impl EmbryoInjector {
             )
             .name("zynx::trampoline"),
         )?;
+
+        // Fixme: defer munmap trampoline if failed
+
+        // Establish a unix socket connection with the remote process for IPC
         let conn = self.connect(trampoline_addr)?;
 
+        // Install the bridge library fd into the remote process
         let bridge = Bridge::instance();
         let bridge_fd = self.install_fd(trampoline_addr, &conn, bridge.as_fd())?;
 
@@ -192,6 +233,8 @@ impl EmbryoInjector {
 
         let bridge_fd = bridge_fd.forget();
 
+        // If there are libraries to inject, keep the socket open for sending
+        // library fds later; otherwise close it immediately
         let (conn_fd_local, conn_fd_remote) = if !libs.is_empty() {
             let (local, remote) = conn.forget();
             (Some(local), Some(remote))
@@ -200,23 +243,27 @@ impl EmbryoInjector {
             (None, None)
         };
 
+        // Assemble the AArch64 trampoline code using dynasm
         let mut ops: VecAssembler<Aarch64Relocation> = VecAssembler::new(0);
 
+        // Prepare dlopen info: load bridge library from the installed fd
         let info = unsafe { DlextInfo::from_raw_fd(bridge_fd) };
 
+        // Arguments passed to the bridge's pre-hook function
         let bridge_args = BridgeArgs {
             conn_fd: conn_fd_remote.unwrap_or(-1),
             specialize_version: SC_CONFIG.ver,
         };
 
         dynasm!(ops
-            // save args on register
+            // Step 1: Save specialize args (x0-x7) onto the stack
             ; stp x6, x7, [sp, #-16]!
             ; stp x4, x5, [sp, #-16]!
             ; stp x2, x3, [sp, #-16]!
             ; stp x0, x1, [sp, #-16]!
 
-            // dlopen
+            // Step 2: Load the bridge library via android_dlopen_ext
+            //   x0 = library name ("zynx::bridge"), x1 = RTLD_NOW, x2 = DlextInfo
             ; stp fp, lr, [sp, #-16]!
             ; ldr ip, >dlopen
             ; adr x0, >lib_name
@@ -225,14 +272,16 @@ impl EmbryoInjector {
             ; blr ip
             ; ldp fp, lr, [sp], #16
 
-            // close
+            // Step 3: Close the bridge fd via syscall (no longer needed after dlopen)
+            //   x0 = dlopen handle (saved/restored around the syscall)
             ; stp x0, xzr, [sp, #-16]!
             ; mov x8, Sysno::close as _
             ; mov x0, bridge_fd as _
             ; svc #0
             ; ldp x0, xzr, [sp], #16
 
-            // dlsym post-hook
+            // Step 4a: Resolve the post-hook symbol and store its address
+            //   dlsym(handle, "specialize_post") -> post_hook_addr
             ; stp fp, lr, [sp, #-16]!
             ; stp x0, x1, [sp, #-16]!
             ; ldr ip, >dlsym
@@ -243,14 +292,16 @@ impl EmbryoInjector {
             ; ldp x0, x1, [sp], #16
             ; ldp fp, lr, [sp], #16
 
-            // dlsym pre-hook
+            // Step 4b: Resolve the pre-hook symbol
+            //   dlsym(handle, "specialize_pre") -> x0
             ; stp fp, lr, [sp, #-16]!
             ; ldr ip, >dlsym
             ; adr x1, >pre_hook_sym
             ; blr ip
             ; ldp fp, lr, [sp], #16
 
-            // call pre-hook
+            // Step 5: Call the pre-hook
+            //   pre_hook(args_on_stack, args_cnt, &bridge_args)
             ; stp fp, lr, [sp, #-16]!
             ; mov ip, x0
             ; add x0, sp, 16
@@ -259,45 +310,50 @@ impl EmbryoInjector {
             ; blr ip
             ; ldp fp, lr, [sp], #16
 
-            // replace lr
+            // Step 6: Hijack LR so SpecializeCommon returns to our trampoline
+            //   Save the real LR, then set LR to the trampoline label
             ; adr x0, >specialize_lr
             ; str lr, [x0]
             ; adr lr, >trampoline
 
-            // restore args from stack
+            // Step 7: Restore original specialize args and jump to SpecializeCommon
             ; ldp x0, x1, [sp], #16
             ; ldp x2, x3, [sp], #16
             ; ldp x4, x5, [sp], #16
             ; ldp x6, x7, [sp], #16
 
-            // call SpecializeCommon
+            // Tail-call into the real SpecializeCommon
             ; ldr ip, >specialize
             ; br ip
 
-            // call post-hook
+            // Step 8: Post-hook trampoline (SpecializeCommon returns here)
             ; trampoline:
             ; stp fp, lr, [sp, #-16]!
             ; ldr ip, >post_hook_addr
             ; blr ip
             ; ldp fp, lr, [sp], #16
 
-            // tail call munmap
+            // Step 9: Self-cleanup via munmap, then return to the real caller
+            //   Restore original LR, then tail-call munmap(trampoline_addr, size)
             ; ldr lr, >specialize_lr
             ; ldr ip, >munmap
             ; ldr x0, >trampoline_addr
             ; mov x1, *TRAMPOLINE_SIZE as _
             ; br ip
 
-            // for specialize
+            // ---- Data section ----
+
+            // Address of the original SpecializeCommon function
             ; .align 8
             ; specialize:
             ;; ops.push_u64(self.specialize_fn as _)
 
+            // Slot to save/restore the original return address
             ; .align 8
             ; specialize_lr:
             ;; ops.push_u64(0xfee1deadfee1dead)
 
-            // for dlopen
+            // Resolved addresses of dlopen and dlsym
             ; .align 8
             ; dlopen:
             ;; ops.push_u64(self.resolve_fn(("libdl", "android_dlopen_ext"))? as _)
@@ -306,19 +362,22 @@ impl EmbryoInjector {
             ; dlsym:
             ;; ops.push_u64(self.resolve_fn(("libdl", "dlsym"))? as _)
 
+            // Bridge library name (used by android_dlopen_ext)
             ; .align 8
             ; lib_name:
             ;; ops.extend(c"zynx::bridge".to_bytes_with_nul())
 
+            // DlextInfo struct (tells dlopen to load from fd)
             ; .align align_of::<DlextInfo>()
             ; lib_info:
             ;; ops.extend(crate::misc::as_byte_slice(&info))
 
-            // for hooks
+            // BridgeArgs struct passed to the pre-hook
             ; .align align_of::<BridgeArgs>()
             ; bridge_args:
             ;; ops.extend(crate::misc::as_byte_slice(&bridge_args))
 
+            // Hook symbol name strings
             ; .align 8
             ; pre_hook_sym:
             ;; ops.extend(c"specialize_pre".to_bytes_with_nul())
@@ -327,31 +386,36 @@ impl EmbryoInjector {
             ; post_hook_sym:
             ;; ops.extend(c"specialize_post".to_bytes_with_nul())
 
+            // Slot to store the resolved post-hook function pointer
             ; .align 8
             ; post_hook_addr:
             ;; ops.push_u64(0xfee1deadfee1dead)
 
-            // for unmap
+            // Resolved address of munmap (for self-cleanup)
             ; .align 8
             ; munmap:
             ;; ops.push_u64(self.resolve_fn(("libc", "munmap"))? as _)
 
+            // Base address of this trampoline (passed to munmap)
             ; .align 8
             ; trampoline_addr:
             ;; ops.push_u64(trampoline_addr as _)
         );
 
+        // Finalize the assembled bytecode and write it into the trampoline region
         let bytecode = ops.finalize()?;
 
         trace!("dynasm bytecode: {bytecode:?}");
 
         self.poke_data(trampoline_addr, &bytecode)?;
 
+        // Redirect execution to the trampoline and release the process
         regs.set_pc(trampoline_addr);
 
         self.set_regs(&regs)?;
         self.detach(None)?;
 
+        // Send library fds over the socket so the bridge can load them
         if let Some(conn_fd) = conn_fd_local {
             self.send_inject_libs(conn_fd, libs)?;
         }
@@ -359,12 +423,16 @@ impl EmbryoInjector {
         Ok(())
     }
 
+    /// Send inject library file descriptors and metadata to the remote process
+    /// over a unix seqpacket socket. The bridge will receive these and load
+    /// the libraries into the target process.
     fn send_inject_libs(&self, conn_fd: OwnedFd, libs: &[Arc<InjectLibrary>]) -> Result<()> {
         info!(
             "send inject libs: connection fd = {conn_fd:?}, libs count = {}",
             libs.len()
         );
 
+        // Collect library names, types, and raw fds to send over the socket
         let mut library_info = Vec::with_capacity(libs.len());
         let mut library_fds = Vec::with_capacity(libs.len());
 
@@ -378,6 +446,8 @@ impl EmbryoInjector {
 
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
 
+        // First message: header with serialized data length and fd count
+        // Second message: serialized library list + fds via SCM_RIGHTS
         conn.send(bytemuck::bytes_of(&[data.len(), library_fds.len()]))?;
         conn.send_fds(&data, &library_fds)?;
 
