@@ -4,20 +4,22 @@ mod zygisk;
 
 use crate::android::packages::PackageInfoListLocked;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
+use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use futures::future;
 use log::warn;
 use memfd::{FileSeal, Memfd, MemfdOptions};
 use nix::unistd::{Gid, Uid};
+use std::any::Any;
 use std::collections::HashSet;
-use std::fmt::{Debug, Display};
-use std::fs;
+use std::fmt::{Debug, Display, Formatter};
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::Deref;
 use std::os::fd::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
+use std::{fmt, fs, mem};
 use zynx_bridge_types::zygote::ProviderType;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
@@ -86,12 +88,28 @@ impl<'a> EmbryoCheckArgs<'a> {
         })
     }
 
-    pub fn is_fast(&self) -> bool {
-        matches!(self, EmbryoCheckArgs::Fast(_))
+    // pub fn is_fast(&self) -> bool {
+    //     matches!(self, EmbryoCheckArgs::Fast(_))
+    // }
+    //
+    // pub fn is_slow(&self) -> bool {
+    //     !self.is_fast()
+    // }
+
+    pub fn assume_fast(&self) -> &EmbryoCheckArgsFast<'a> {
+        if let EmbryoCheckArgs::Fast(args) = self {
+            return args;
+        }
+
+        panic!("unexpected check args: expected `fast` but got `slow`");
     }
 
-    pub fn is_slow(&self) -> bool {
-        !self.is_fast()
+    pub fn assume_slow(&self) -> &EmbryoCheckArgsSlow<'a> {
+        if let EmbryoCheckArgs::Slow(args) = self {
+            return args;
+        }
+
+        panic!("unexpected check args: expected `slow` but got `fast`");
     }
 }
 
@@ -166,11 +184,20 @@ impl AsRawFd for InjectLibrary {
     }
 }
 
-#[derive(Debug, Clone)]
 pub enum PolicyDecision {
     Allow(Vec<Arc<InjectLibrary>>),
-    MoreInfo,
+    MoreInfo(Option<Box<dyn Any + Send + Sync>>),
     Deny,
+}
+
+impl Debug for PolicyDecision {
+    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            PolicyDecision::Allow(libs) => fmt.debug_tuple("Allow").field(libs).finish(),
+            PolicyDecision::MoreInfo(_) => fmt.write_str("MoreInfo(...)"),
+            PolicyDecision::Deny => fmt.write_str("Deny"),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -186,6 +213,14 @@ pub trait PolicyProvider: Send + Sync {
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
+
+    async fn recheck(
+        &self,
+        args: &EmbryoCheckArgs<'_>,
+        _state: Box<dyn Any + Send + Sync>,
+    ) -> PolicyDecision {
+        self.check(args).await
+    }
 }
 
 #[derive(Default)]
@@ -198,6 +233,9 @@ impl PolicyProviderManager {
         let mut instance = Self::default();
 
         instance.register::<LiteLoaderPolicyProvider>().await?;
+
+        #[cfg(feature = "zygisk")]
+        instance.register::<ZygiskPolicyProvider>().await?;
 
         POLICY_PROVIDER_MANAGER
             .set(instance)
@@ -219,13 +257,14 @@ impl PolicyProviderManager {
         POLICY_PROVIDER_MANAGER.wait()
     }
 
+    /// Run fast check on all providers concurrently.
     pub async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
         let futures: Vec<_> = self.providers.iter().map(|p| p.check(args)).collect();
 
         let decisions = future::join_all(futures).await;
         let more_info = decisions
             .iter()
-            .any(|d| matches!(d, PolicyDecision::MoreInfo));
+            .any(|it| matches!(it, PolicyDecision::MoreInfo(_)));
 
         PolicyDecisions {
             decisions,
@@ -233,26 +272,45 @@ impl PolicyProviderManager {
         }
     }
 
+    /// Re-check providers that returned MoreInfo with slow (full) args.
+    /// Cached state from the fast check is forwarded to `recheck` when available.
     pub async fn recheck_slow(&self, args: &EmbryoCheckArgs<'_>, result: &mut PolicyDecisions) {
         result.more_info = false;
 
-        let recheck_indices: Vec<usize> = result
-            .decisions
-            .iter()
+        // Extract MoreInfo decisions along with their cached state,
+        // replacing them with Deny as placeholders.
+        let mut recheck_items = Vec::new();
+        let decisions = mem::take(&mut result.decisions);
+
+        result.decisions = decisions
+            .into_iter()
             .enumerate()
-            .filter(|(_, pdc)| matches!(pdc, PolicyDecision::MoreInfo))
-            .map(|(i, _)| i)
+            .map(|(i, it)| match it {
+                PolicyDecision::MoreInfo(state) => {
+                    recheck_items.push((i, state));
+                    PolicyDecision::Deny
+                }
+                other => other,
+            })
             .collect();
 
-        let futures: Vec<_> = recheck_indices
-            .iter()
-            .map(|&i| self.providers[i].check(args))
+        // Re-check concurrently: use `recheck` if state is available, otherwise `check`.
+        let futures: Vec<_> = recheck_items
+            .into_iter()
+            .map(|(i, state)| async move {
+                let decision = match state {
+                    Some(s) => self.providers[i].recheck(args, s).await,
+                    None => self.providers[i].check(args).await,
+                };
+                (i, decision)
+            })
             .collect();
 
         let new_decisions = future::join_all(futures).await;
 
-        for (&index, new_decision) in recheck_indices.iter().zip(new_decisions) {
-            if matches!(new_decision, PolicyDecision::MoreInfo) {
+        // Apply new decisions; MoreInfo in slow path is not allowed.
+        for (index, new_decision) in new_decisions {
+            if matches!(new_decision, PolicyDecision::MoreInfo(_)) {
                 warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
                 result.decisions[index] = PolicyDecision::Deny;
             } else {
