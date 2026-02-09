@@ -3,7 +3,7 @@ use notify::{Config, Event, EventKindMask, INotifyWatcher, RecursiveMode, Watche
 use std::path::Path;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
-use zynx_utils::ext::ResultExt;
+use zynx_misc::ext::ResultExt;
 
 pub struct AsyncInotify {
     rx: Receiver<Result<Event>>,

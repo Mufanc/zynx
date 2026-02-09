@@ -2036,10 +2036,10 @@ dependencies = [
  "uds",
  "wincode",
  "zynx-bridge",
- "zynx-bridge-types",
+ "zynx-bridge-shared",
  "zynx-ebpf",
- "zynx-ebpf-types",
- "zynx-utils",
+ "zynx-ebpf-shared",
+ "zynx-misc",
 ]
 
 [[package]]
@@ -2053,13 +2053,13 @@ dependencies = [
  "nix",
  "uds",
  "wincode",
- "zynx-bridge-types",
- "zynx-utils",
+ "zynx-bridge-shared",
+ "zynx-misc",
  "zynx-zygisk-compat",
 ]
 
 [[package]]
-name = "zynx-bridge-types"
+name = "zynx-bridge-shared"
 version = "1.0.0"
 dependencies = [
  "anyhow",
@@ -2080,15 +2080,15 @@ dependencies = [
  "aya-ebpf",
  "aya-log-ebpf",
  "which",
- "zynx-ebpf-types",
+ "zynx-ebpf-shared",
 ]
 
 [[package]]
-name = "zynx-ebpf-types"
+name = "zynx-ebpf-shared"
 version = "1.0.0"
 
 [[package]]
-name = "zynx-utils"
+name = "zynx-misc"
 version = "1.0.0"
 dependencies = [
  "log",
@@ -2102,5 +2102,5 @@ dependencies = [
  "jni-sys",
  "log",
  "nix",
- "zynx-bridge-types",
+ "zynx-bridge-shared",
 ]

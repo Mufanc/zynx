@@ -9,8 +9,8 @@ use log::warn;
 use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::{mem, ptr};
-use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::zygote::SpecializeArgs;
+use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::zygote::SpecializeArgs;
 
 pub type PinnedZygiskModule = Pin<Box<ZygiskModule>>;
 

@@ -15,7 +15,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::task;
-use zynx_bridge_types::zygote::ProviderType;
+use zynx_bridge_shared::zygote::ProviderType;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.so$").unwrap());

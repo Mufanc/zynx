@@ -20,7 +20,7 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::{fmt, fs, mem};
-use zynx_bridge_types::zygote::{IpcPayload, IpcSegment, ProviderType};
+use zynx_bridge_shared::zygote::{IpcPayload, IpcSegment, ProviderType};
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 

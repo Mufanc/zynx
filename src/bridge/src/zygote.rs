@@ -7,9 +7,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
-use zynx_utils::ext::ResultExt;
+use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
+use zynx_misc::ext::ResultExt;
 
 thread_local! {
     static G_ARGS: RefCell<Option<SpecializeArgs>> = RefCell::default();

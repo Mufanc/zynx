@@ -7,7 +7,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
 
-use zynx_bridge_types::zygote::ProviderType;
+use zynx_bridge_shared::zygote::ProviderType;
 
 struct ZygiskModule {}
 

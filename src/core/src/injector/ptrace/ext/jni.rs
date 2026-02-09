@@ -7,7 +7,7 @@ use nix::libc::c_long;
 use scopeguard::defer;
 use std::fmt::Display;
 use std::ops::Deref;
-use zynx_utils::ext::ResultExt;
+use zynx_misc::ext::ResultExt;
 
 #[macro_export]
 macro_rules! jni_fn {

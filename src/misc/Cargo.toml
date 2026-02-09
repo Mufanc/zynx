@@ -1,5 +1,5 @@
 [package]
-name = "zynx-utils"
+name = "zynx-misc"
 version.workspace = true
 edition.workspace = true
 

@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = ["zygisk"]
-zygisk = ["zynx-bridge/zygisk", "zynx-bridge-types/zygisk"]
+zygisk = ["zynx-bridge/zygisk", "zynx-bridge-shared/zygisk"]
 
 [dependencies]
 android_logger = { workspace = true }
@@ -40,9 +40,9 @@ tokio = { workspace = true }
 uds = { workspace = true }
 wincode = { workspace = true }
 zynx-bridge = { path = "../bridge" }
-zynx-bridge-types = { path = "../bridge-types" }
-zynx-utils = { path = "../utils" }
-zynx-ebpf-types = { path = "../ebpf-types" }
+zynx-bridge-shared = { path = "../bridge-shared" }
+zynx-misc = { path = "../misc" }
+zynx-ebpf-shared = { path = "../ebpf-shared" }
 
 [build-dependencies]
 aya-build = { workspace = true }

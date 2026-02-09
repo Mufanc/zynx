@@ -29,9 +29,9 @@ use std::ops::Deref;
 use std::os::fd::{AsFd, FromRawFd};
 use syscalls::Sysno;
 use tokio::runtime::Handle;
-use zynx_bridge_types::dlfcn::DlextInfo;
-use zynx_bridge_types::zygote::{BridgeArgs, SpecializeArgs};
-use zynx_utils::ext::ResultExt;
+use zynx_bridge_shared::dlfcn::DlextInfo;
+use zynx_bridge_shared::zygote::{BridgeArgs, SpecializeArgs};
+use zynx_misc::ext::ResultExt;
 
 static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 

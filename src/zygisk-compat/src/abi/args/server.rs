@@ -2,7 +2,7 @@ use jni_sys::{jint, jintArray, jlong};
 use nix::libc::c_long;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
-use zynx_bridge_types::zygote::SpecializeArgs;
+use zynx_bridge_shared::zygote::SpecializeArgs;
 
 #[repr(C)]
 #[derive(Clone)]

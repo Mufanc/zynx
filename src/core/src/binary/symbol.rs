@@ -7,7 +7,7 @@ use std::marker::PhantomPinned;
 use std::mem::MaybeUninit;
 use std::path::Path;
 use std::pin::Pin;
-use zynx_utils::ext::ResultExt;
+use zynx_misc::ext::ResultExt;
 
 #[derive(Debug, Clone)]
 pub struct Symbol {

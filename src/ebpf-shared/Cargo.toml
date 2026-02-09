@@ -1,5 +1,5 @@
 [package]
-name = "zynx-ebpf-types"
+name = "zynx-ebpf-shared"
 version.workspace = true
 edition.workspace = true
 

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::injector::ProviderHandler;
-use zynx_bridge_types::zygote::{ProviderType, SpecializeArgs};
+use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::injector::ProviderHandler;
+use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 
 pub struct LiteLoaderProviderHandler;
 

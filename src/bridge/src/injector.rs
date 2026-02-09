@@ -4,9 +4,9 @@ use crate::injector::liteloader::LiteLoaderProviderHandler;
 use anyhow::Result;
 use log::error;
 use std::collections::HashMap;
-use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::injector::ProviderHandler;
-use zynx_bridge_types::zygote::{ProviderType, SpecializeArgs};
+use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::injector::ProviderHandler;
+use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 use zynx_zygisk_compat::ZygiskProviderHandler;
 
 #[allow(clippy::type_complexity)]
