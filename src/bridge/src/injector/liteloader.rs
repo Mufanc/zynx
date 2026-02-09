@@ -8,7 +8,11 @@ pub struct LiteLoaderProviderHandler;
 impl ProviderHandler for LiteLoaderProviderHandler {
     const TYPE: ProviderType = ProviderType::LiteLoader;
 
-    fn on_specialize_pre(_args: &mut SpecializeArgs, _libs: Vec<Library>) -> Result<()> {
+    fn on_specialize_pre(
+        _args: &mut SpecializeArgs,
+        _libs: Vec<Library>,
+        _data: Option<Vec<u8>>,
+    ) -> Result<()> {
         Ok(())
     }
 

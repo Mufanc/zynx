@@ -1,5 +1,5 @@
 use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::{EmbryoCheckArgs, InjectLibrary, PolicyProviderManager};
+use crate::injector::app::policy::{EmbryoCheckArgs, InjectPayload, PolicyProviderManager};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, SC_CONFIG};
 use crate::injector::bridge::Bridge;
@@ -26,13 +26,11 @@ use scopeguard::defer;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
-use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
-use std::sync::Arc;
+use std::os::fd::{AsFd, FromRawFd};
 use syscalls::Sysno;
 use tokio::runtime::Handle;
-use uds::UnixSeqpacketConn;
 use zynx_bridge_types::dlfcn::DlextInfo;
-use zynx_bridge_types::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
+use zynx_bridge_types::zygote::{BridgeArgs, SpecializeArgs};
 use zynx_utils::ext::ResultExt;
 
 static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
@@ -115,11 +113,11 @@ impl EmbryoInjector {
 
                     // Query policy providers to determine if injection is needed
                     let handle = Handle::current();
-                    let inject_libs = handle.block_on(self.check_process(&args))?;
+                    let inject_payload = handle.block_on(self.check_process(&args))?;
 
-                    if let Some(libs) = inject_libs {
+                    if let Some(payload) = inject_payload {
                         // Injection required: deploy trampoline and inject libraries
-                        self.do_inject(regs, &raw_args, &libs)?;
+                        self.do_inject(regs, &raw_args, payload)?;
                     } else {
                         // No injection needed: just restore registers and let it continue
                         self.set_regs(&regs)?;
@@ -157,10 +155,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    async fn check_process(
-        &self,
-        args: &SpecializeArgs,
-    ) -> Result<Option<Vec<Arc<InjectLibrary>>>> {
+    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<InjectPayload>> {
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -201,12 +196,9 @@ impl EmbryoInjector {
         &self,
         mut regs: RegSet,
         raw_args: &[c_long],
-        libs: &[Arc<InjectLibrary>],
+        payload: InjectPayload,
     ) -> Result<()> {
-        info!(
-            "injecting process: {self}, raw_args = {raw_args:?}, libs count = {}",
-            libs.len()
-        );
+        info!("injecting process: {self}, raw_args = {raw_args:?}");
 
         // Todo: selinux check execmem
 
@@ -233,9 +225,9 @@ impl EmbryoInjector {
 
         let bridge_fd = bridge_fd.forget();
 
-        // If there are libraries to inject, keep the socket open for sending
-        // library fds later; otherwise close it immediately
-        let (conn_fd_local, conn_fd_remote) = if !libs.is_empty() {
+        // If there are segments to inject, keep the socket open for sending
+        // payload later; otherwise close it immediately
+        let (conn_fd_local, conn_fd_remote) = if !payload.is_empty() {
             let (local, remote) = conn.forget();
             (Some(local), Some(remote))
         } else {
@@ -415,41 +407,10 @@ impl EmbryoInjector {
         self.set_regs(&regs)?;
         self.detach(None)?;
 
-        // Send library fds over the socket so the bridge can load them
+        // Send payload over the socket so the bridge can load libraries
         if let Some(conn_fd) = conn_fd_local {
-            self.send_inject_libs(conn_fd, libs)?;
+            payload.send_to(conn_fd)?;
         }
-
-        Ok(())
-    }
-
-    /// Send inject library file descriptors and metadata to the remote process
-    /// over a unix seqpacket socket. The bridge will receive these and load
-    /// the libraries into the target process.
-    fn send_inject_libs(&self, conn_fd: OwnedFd, libs: &[Arc<InjectLibrary>]) -> Result<()> {
-        info!(
-            "send inject libs: connection fd = {conn_fd:?}, libs count = {}",
-            libs.len()
-        );
-
-        // Collect library names, types, and raw fds to send over the socket
-        let mut library_info = Vec::with_capacity(libs.len());
-        let mut library_fds = Vec::with_capacity(libs.len());
-
-        for lib in libs {
-            library_info.push((lib.name().into(), lib.provider_type()));
-            library_fds.push(lib.as_raw_fd());
-        }
-
-        let library_list = LibraryList { info: library_info };
-        let data = wincode::serialize(&library_list)?;
-
-        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
-
-        // First message: header with serialized data length and fd count
-        // Second message: serialized library list + fds via SCM_RIGHTS
-        conn.send(bytemuck::bytes_of(&[data.len(), library_fds.len()]))?;
-        conn.send_fds(&data, &library_fds)?;
 
         Ok(())
     }

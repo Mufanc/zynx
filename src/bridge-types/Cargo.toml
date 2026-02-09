@@ -8,11 +8,13 @@ zygisk = []
 
 [dependencies]
 anyhow = { workspace = true }
+bytemuck = { workspace = true }
 jni-sys = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
+uds = { workspace = true }
 wincode = { workspace = true, features = ["derive"] }
 
 [lints]

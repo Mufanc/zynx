@@ -17,7 +17,11 @@ thread_local! {
 impl ProviderHandler for ZygiskProviderHandler {
     const TYPE: ProviderType = ProviderType::Zygisk;
 
-    fn on_specialize_pre(args: &mut SpecializeArgs, libs: Vec<Library>) -> Result<()> {
+    fn on_specialize_pre(
+        args: &mut SpecializeArgs,
+        libs: Vec<Library>,
+        _data: Option<Vec<u8>>,
+    ) -> Result<()> {
         let mut modules = Vec::new();
 
         for lib in libs {

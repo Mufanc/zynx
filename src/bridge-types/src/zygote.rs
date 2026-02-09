@@ -1,6 +1,11 @@
+use std::mem::size_of;
+use std::os::fd::{FromRawFd, RawFd};
+
+use anyhow::Result;
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use nix::libc::{c_int, c_long};
 use strum_macros::{AsRefStr, EnumIter};
+use uds::UnixSeqpacketConn;
 use wincode::{SchemaRead, SchemaWrite};
 
 #[derive(Debug, Copy, Clone, PartialOrd, PartialEq, AsRefStr, EnumIter)]
@@ -148,8 +153,37 @@ pub enum ProviderType {
 }
 
 #[derive(Debug, SchemaRead, SchemaWrite)]
-pub struct LibraryList {
-    pub info: Vec<(String, ProviderType)>,
+pub struct IpcPayload {
+    pub segments: Vec<IpcSegment>,
+}
+
+#[derive(Debug, SchemaRead, SchemaWrite)]
+pub struct IpcSegment {
+    pub provider_type: ProviderType,
+    pub names: Option<Vec<String>>,
+    pub data: Option<Vec<u8>>,
+    pub fds_count: u32,
+}
+
+impl IpcPayload {
+    pub fn recv_from(conn_fd: RawFd) -> Result<(Self, Vec<RawFd>)> {
+        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd) };
+        let mut buffer = [0u8; size_of::<[usize; 2]>()];
+
+        conn.recv(&mut buffer)?;
+
+        let pair: &[usize; 2] = bytemuck::from_bytes(&buffer);
+        let (buffer_len, fds_len) = (pair[0], pair[1]);
+
+        let mut buffer: Vec<_> = vec![0; buffer_len];
+        let mut fds: Vec<_> = vec![0; fds_len];
+
+        conn.recv_fds(&mut buffer, &mut fds)?;
+
+        let payload: IpcPayload = wincode::deserialize(&buffer)?;
+
+        Ok((payload, fds))
+    }
 }
 
 #[repr(C)]

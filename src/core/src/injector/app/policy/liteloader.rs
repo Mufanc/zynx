@@ -129,7 +129,10 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
             .and_then(|pkgs| pkgs.iter().find_map(|pkg| libs.get(&pkg.name)));
 
         if let Some(libs) = inject_libs {
-            return PolicyDecision::Allow(libs.clone());
+            return PolicyDecision::Allow {
+                libs: libs.clone(),
+                data: None,
+            };
         }
 
         PolicyDecision::Deny

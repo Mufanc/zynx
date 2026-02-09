@@ -2063,11 +2063,13 @@ name = "zynx-bridge-types"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "bytemuck",
  "jni-sys",
  "log",
  "nix",
  "strum",
  "strum_macros",
+ "uds",
  "wincode",
 ]
 

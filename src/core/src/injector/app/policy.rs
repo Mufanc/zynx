@@ -16,11 +16,12 @@ use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::Deref;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::{fmt, fs, mem};
-use zynx_bridge_types::zygote::ProviderType;
+use uds::UnixSeqpacketConn;
+use zynx_bridge_types::zygote::{IpcPayload, IpcSegment, ProviderType};
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
@@ -185,7 +186,10 @@ impl AsRawFd for InjectLibrary {
 }
 
 pub enum PolicyDecision {
-    Allow(Vec<Arc<InjectLibrary>>),
+    Allow {
+        libs: Vec<Arc<InjectLibrary>>,
+        data: Option<(ProviderType, Vec<u8>)>,
+    },
     MoreInfo(Option<Box<dyn Any + Send + Sync>>),
     Deny,
 }
@@ -193,7 +197,11 @@ pub enum PolicyDecision {
 impl Debug for PolicyDecision {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            PolicyDecision::Allow(libs) => fmt.debug_tuple("Allow").field(libs).finish(),
+            PolicyDecision::Allow { libs, data } => fmt
+                .debug_struct("Allow")
+                .field("libs", libs)
+                .field("data", &data.as_ref().map(|(t, d)| (t, d.len())))
+                .finish(),
             PolicyDecision::MoreInfo(_) => fmt.write_str("MoreInfo(...)"),
             PolicyDecision::Deny => fmt.write_str("Deny"),
         }
@@ -220,6 +228,29 @@ pub trait PolicyProvider: Send + Sync {
         _state: Box<dyn Any + Send + Sync>,
     ) -> PolicyDecision {
         self.check(args).await
+    }
+}
+
+pub struct InjectPayload {
+    libs: Vec<Arc<InjectLibrary>>,
+    payload: IpcPayload,
+}
+
+impl InjectPayload {
+    pub fn is_empty(&self) -> bool {
+        self.payload.segments.is_empty()
+    }
+
+    pub fn send_to(self, conn_fd: OwnedFd) -> Result<()> {
+        let fds: Vec<RawFd> = self.libs.iter().map(|lib| lib.as_raw_fd()).collect();
+        let data = wincode::serialize(&self.payload)?;
+
+        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
+
+        conn.send(bytemuck::bytes_of(&[data.len(), fds.len()]))?;
+        conn.send_fds(&data, &fds)?;
+
+        Ok(())
     }
 }
 
@@ -320,27 +351,51 @@ impl PolicyProviderManager {
     }
 
     /// Aggregate decisions from all policy providers.
-    /// Returns None if all denied, Some(libs) if injection allowed (bridge + extra libs).
-    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<Vec<Arc<InjectLibrary>>> {
+    /// Returns None if all denied, Some(payload) if injection allowed.
+    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<InjectPayload> {
         let mut has_allow = false;
-
         let mut visited: HashSet<&str> = HashSet::new();
-        let mut inject_libs = Vec::new();
+        let mut libs = Vec::new();
+        let mut segments = Vec::new();
 
         for decision in decisions {
-            if let PolicyDecision::Allow(libs) = decision {
+            if let PolicyDecision::Allow {
+                libs: decision_libs,
+                data,
+            } = decision
+            {
                 has_allow = true;
 
-                for lib in libs {
+                for lib in decision_libs {
                     let id = lib.name();
                     if !visited.contains(id) {
                         visited.insert(id);
-                        inject_libs.push(lib.clone());
+                        segments.push(IpcSegment {
+                            provider_type: lib.provider_type(),
+                            names: Some(vec![lib.name().into()]),
+                            data: None,
+                            fds_count: 1,
+                        });
+                        libs.push(lib.clone());
                     }
+                }
+
+                if let Some((provider_type, bytes)) = data {
+                    segments.push(IpcSegment {
+                        provider_type: *provider_type,
+                        names: None,
+                        data: Some(bytes.clone()),
+                        fds_count: 0,
+                    });
                 }
             }
         }
 
-        if has_allow { Some(inject_libs) } else { None }
+        if has_allow {
+            let payload = IpcPayload { segments };
+            Some(InjectPayload { libs, payload })
+        } else {
+            None
+        }
     }
 }

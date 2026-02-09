@@ -1,14 +1,14 @@
 use crate::init_logger;
 use crate::injector::ProviderHandlerRegistry;
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 use nix::libc::c_long;
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use uds::UnixSeqpacketConn;
 use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::zygote::{BridgeArgs, LibraryList, SpecializeArgs};
+use zynx_bridge_types::zygote::{BridgeArgs, IpcPayload, SpecializeArgs};
 use zynx_utils::ext::ResultExt;
 
 thread_local! {
@@ -22,35 +22,38 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
     if bridge_args.conn_fd >= 0 {
         info!("connection fd: {}", bridge_args.conn_fd);
 
-        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(bridge_args.conn_fd) };
-        let mut buffer = [0u8; size_of::<[usize; 2]>()];
+        let (payload, fds) = IpcPayload::recv_from(bridge_args.conn_fd)?;
 
-        conn.recv(&mut buffer)?;
+        let mut fd_cursor = 0;
+        let mut all_libs = Vec::new();
+        let mut data_map = HashMap::new();
 
-        let pair: &[usize; 2] = bytemuck::from_bytes(&buffer);
-        let (buffer_len, fds_len) = (pair[0], pair[1]);
+        for segment in payload.segments {
+            let count = segment.fds_count as usize;
+            let seg_fds = &fds[fd_cursor..fd_cursor + count];
+            fd_cursor += count;
 
-        debug!("buffer_len = {buffer_len}, fds_len = {fds_len}");
-
-        let mut buffer: Vec<_> = vec![0; buffer_len];
-        let mut fds: Vec<_> = vec![0; fds_len];
-
-        conn.recv_fds(&mut buffer, &mut fds)?;
-
-        let library_list: LibraryList = wincode::deserialize(&buffer)?;
-        let library_list: Vec<_> = library_list
-            .info
-            .into_iter()
-            .zip(fds)
-            .flat_map(|((name, provider_type), fd)| {
-                Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }, provider_type)
+            if let Some(names) = segment.names {
+                for (name, &fd) in names.into_iter().zip(seg_fds) {
+                    if let Ok(lib) = Library::open(
+                        name,
+                        unsafe { OwnedFd::from_raw_fd(fd) },
+                        segment.provider_type,
+                    )
                     .inspect_log_error()
-            })
-            .collect();
+                    {
+                        all_libs.push(lib);
+                    }
+                }
+            }
+
+            if let Some(data) = segment.data {
+                data_map.insert(segment.provider_type, data);
+            }
+        }
 
         let handler = ProviderHandlerRegistry::new();
-
-        handler.dispatch_pre(&mut args_struct, library_list);
+        handler.dispatch_pre(&mut args_struct, all_libs, data_map);
 
         G_HANDLER.with(|cell| {
             *cell.borrow_mut() = Some(handler);
