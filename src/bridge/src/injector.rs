@@ -46,24 +46,11 @@ impl ProviderHandlerRegistry {
     pub fn dispatch_pre(
         &self,
         args: &mut SpecializeArgs,
-        mut libs: Vec<Library>,
-        mut data_map: HashMap<ProviderType, Vec<u8>>,
+        mut groups: HashMap<ProviderType, (Vec<Library>, Option<Vec<u8>>)>,
     ) {
         for (provider_type, handler) in &self.handlers {
-            let mut i = 0;
-            let mut matched_libs = Vec::new();
-
-            while i < libs.len() {
-                if libs[i].provider_type() == *provider_type {
-                    matched_libs.push(libs.swap_remove(i));
-                } else {
-                    i += 1;
-                }
-            }
-
-            let data = data_map.remove(provider_type);
-
-            if let Err(err) = (handler.on_specialize_pre)(args, matched_libs, data) {
+            let (libs, data) = groups.remove(provider_type).unwrap_or_default();
+            if let Err(err) = (handler.on_specialize_pre)(args, libs, data) {
                 error!("failed to dispatch pre hook for provider type {provider_type:?}: {err:?}");
             }
         }

@@ -44,11 +44,7 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
             }
         };
 
-        let library = InjectLibrary::new(
-            path,
-            &format!("liteloader::{library_name}"),
-            ProviderType::LiteLoader,
-        )?;
+        let library = InjectLibrary::new(path, &format!("liteloader::{library_name}"))?;
 
         libs.entry(package_name)
             .or_default()
@@ -89,6 +85,10 @@ impl LiteLoaderPolicyProvider {
 
 #[async_trait]
 impl PolicyProvider for LiteLoaderPolicyProvider {
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::LiteLoader
+    }
+
     async fn init(&self) -> Result<()> {
         match fs::metadata(&*LITE_LIBRARIES_DIR) {
             Ok(meta) => {

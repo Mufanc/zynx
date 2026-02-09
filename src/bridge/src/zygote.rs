@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
 use zynx_bridge_types::dlfcn::Library;
-use zynx_bridge_types::zygote::{BridgeArgs, IpcPayload, SpecializeArgs};
+use zynx_bridge_types::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
 use zynx_utils::ext::ResultExt;
 
 thread_local! {
@@ -25,35 +25,30 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
         let (payload, fds) = IpcPayload::recv_from(bridge_args.conn_fd)?;
 
         let mut fd_cursor = 0;
-        let mut all_libs = Vec::new();
-        let mut data_map = HashMap::new();
+        let mut groups: HashMap<ProviderType, (Vec<Library>, Option<Vec<u8>>)> = HashMap::new();
 
         for segment in payload.segments {
             let count = segment.fds_count as usize;
             let seg_fds = &fds[fd_cursor..fd_cursor + count];
             fd_cursor += count;
 
+            let mut libs = Vec::new();
+
             if let Some(names) = segment.names {
                 for (name, &fd) in names.into_iter().zip(seg_fds) {
-                    if let Ok(lib) = Library::open(
-                        name,
-                        unsafe { OwnedFd::from_raw_fd(fd) },
-                        segment.provider_type,
-                    )
-                    .inspect_log_error()
+                    if let Ok(lib) =
+                        Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }).inspect_log_error()
                     {
-                        all_libs.push(lib);
+                        libs.push(lib);
                     }
                 }
             }
 
-            if let Some(data) = segment.data {
-                data_map.insert(segment.provider_type, data);
-            }
+            groups.insert(segment.provider_type, (libs, segment.data));
         }
 
         let handler = ProviderHandlerRegistry::new();
-        handler.dispatch_pre(&mut args_struct, all_libs, data_map);
+        handler.dispatch_pre(&mut args_struct, groups);
 
         G_HANDLER.with(|cell| {
             *cell.borrow_mut() = Some(handler);

@@ -1,4 +1,3 @@
-use crate::zygote::ProviderType;
 use anyhow::{Error, Result, anyhow};
 use log::info;
 use nix::libc::{RTLD_NOW, c_int, off64_t, size_t};
@@ -60,11 +59,10 @@ pub struct Library {
     name: String,
     handle: *const c_void,
     auto_close: bool,
-    provider_type: ProviderType,
 }
 
 impl Library {
-    pub fn open(name: String, fd: OwnedFd, provider_type: ProviderType) -> Result<Self> {
+    pub fn open(name: String, fd: OwnedFd) -> Result<Self> {
         info!("dlopen library: {}, fd = {}", name, fd.as_raw_fd());
 
         let info = unsafe { DlextInfo::from_raw_fd(fd.as_raw_fd()) };
@@ -78,16 +76,11 @@ impl Library {
             name,
             handle,
             auto_close: false,
-            provider_type,
         })
     }
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn provider_type(&self) -> ProviderType {
-        self.provider_type
     }
 
     pub fn dlsym(&self, symbol: &str) -> Result<*const c_void> {

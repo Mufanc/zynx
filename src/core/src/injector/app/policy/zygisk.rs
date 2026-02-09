@@ -7,6 +7,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
 
+use zynx_bridge_types::zygote::ProviderType;
+
 struct ZygiskModule {}
 
 impl ZygiskModule {
@@ -26,6 +28,10 @@ pub struct ZygiskPolicyProvider {
 
 #[async_trait]
 impl PolicyProvider for ZygiskPolicyProvider {
+    fn provider_type(&self) -> ProviderType {
+        ProviderType::Zygisk
+    }
+
     async fn init(&self) -> Result<()> {
         Ok(())
     }

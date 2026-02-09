@@ -12,7 +12,7 @@ use log::warn;
 use memfd::{FileSeal, Memfd, MemfdOptions};
 use nix::unistd::{Gid, Uid};
 use std::any::Any;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::Deref;
@@ -129,15 +129,10 @@ impl<'a> Deref for EmbryoCheckArgs<'a> {
 pub struct InjectLibrary {
     name: String,
     fd: Memfd,
-    provider_type: ProviderType,
 }
 
 impl InjectLibrary {
-    pub fn new<P: AsRef<Path>, N: Display>(
-        path: P,
-        name: &N,
-        provider_type: ProviderType,
-    ) -> Result<Self> {
+    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
         let path = path.as_ref();
         let name = format!("zynx-inject::{name}");
 
@@ -158,24 +153,16 @@ impl InjectLibrary {
 
         // Todo: setfilecon
 
-        Ok(Self {
-            name,
-            fd,
-            provider_type,
-        })
+        Ok(Self { name, fd })
     }
-    pub fn from_file<P: AsRef<Path>>(path: P, provider_type: ProviderType) -> Result<Self> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
 
-        Self::new(path, &path.display(), provider_type)
+        Self::new(path, &path.display())
     }
 
     pub fn name(&self) -> &str {
         &self.name
-    }
-
-    pub fn provider_type(&self) -> ProviderType {
-        self.provider_type
     }
 }
 
@@ -188,7 +175,7 @@ impl AsRawFd for InjectLibrary {
 pub enum PolicyDecision {
     Allow {
         libs: Vec<Arc<InjectLibrary>>,
-        data: Option<(ProviderType, Vec<u8>)>,
+        data: Option<Vec<u8>>,
     },
     MoreInfo(Option<Box<dyn Any + Send + Sync>>),
     Deny,
@@ -200,7 +187,7 @@ impl Debug for PolicyDecision {
             PolicyDecision::Allow { libs, data } => fmt
                 .debug_struct("Allow")
                 .field("libs", libs)
-                .field("data", &data.as_ref().map(|(t, d)| (t, d.len())))
+                .field("data", &data.as_ref().map(|d| d.len()))
                 .finish(),
             PolicyDecision::MoreInfo(_) => fmt.write_str("MoreInfo(...)"),
             PolicyDecision::Deny => fmt.write_str("Deny"),
@@ -216,6 +203,8 @@ pub struct PolicyDecisions {
 
 #[async_trait]
 pub trait PolicyProvider: Send + Sync {
+    fn provider_type(&self) -> ProviderType;
+
     async fn init(&self) -> Result<()> {
         Ok(())
     }
@@ -353,49 +342,69 @@ impl PolicyProviderManager {
     /// Aggregate decisions from all policy providers.
     /// Returns None if all denied, Some(payload) if injection allowed.
     pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<InjectPayload> {
-        let mut has_allow = false;
-        let mut visited: HashSet<&str> = HashSet::new();
-        let mut libs = Vec::new();
-        let mut segments = Vec::new();
+        struct GroupedEntry {
+            libs: Vec<Arc<InjectLibrary>>,
+            data: Option<Vec<u8>>,
+            visited: HashSet<String>,
+        }
 
-        for decision in decisions {
+        let mut groups: HashMap<ProviderType, GroupedEntry> = HashMap::new();
+
+        // Phase 1: Group libraries and data by ProviderType.
+        // decisions[i] corresponds to self.providers[i] (order preserved by join_all).
+        for (i, decision) in decisions.iter().enumerate() {
             if let PolicyDecision::Allow {
                 libs: decision_libs,
                 data,
             } = decision
             {
-                has_allow = true;
+                let provider_type = self.providers[i].provider_type();
+                let entry = groups.entry(provider_type).or_insert_with(|| GroupedEntry {
+                    libs: Vec::new(),
+                    data: None,
+                    visited: HashSet::new(),
+                });
 
+                // Deduplicate libraries by name within each provider group
                 for lib in decision_libs {
-                    let id = lib.name();
-                    if !visited.contains(id) {
-                        visited.insert(id);
-                        segments.push(IpcSegment {
-                            provider_type: lib.provider_type(),
-                            names: Some(vec![lib.name().into()]),
-                            data: None,
-                            fds_count: 1,
-                        });
-                        libs.push(lib.clone());
+                    if entry.visited.insert(lib.name().to_string()) {
+                        entry.libs.push(lib.clone());
                     }
                 }
 
-                if let Some((provider_type, bytes)) = data {
-                    segments.push(IpcSegment {
-                        provider_type: *provider_type,
-                        names: None,
-                        data: Some(bytes.clone()),
-                        fds_count: 0,
-                    });
+                if let Some(bytes) = data {
+                    entry.data = Some(bytes.clone());
                 }
             }
         }
 
-        if has_allow {
-            let payload = IpcPayload { segments };
-            Some(InjectPayload { libs, payload })
-        } else {
+        // Phase 2: Build IpcSegments and the flat libs list.
+        // The order of `all_libs` must align with segments: each segment's
+        // `fds_count` tells the receiver how many consecutive fds belong to it.
+        let mut all_libs = Vec::new();
+        let mut segments = Vec::new();
+
+        for (provider_type, entry) in groups {
+            let names: Vec<String> = entry.libs.iter().map(|lib| lib.name().into()).collect();
+            let fds_count = names.len() as u32;
+
+            segments.push(IpcSegment {
+                provider_type,
+                names: if names.is_empty() { None } else { Some(names) },
+                data: entry.data,
+                fds_count,
+            });
+            all_libs.extend(entry.libs);
+        }
+
+        if segments.is_empty() {
             None
+        } else {
+            let payload = IpcPayload { segments };
+            Some(InjectPayload {
+                libs: all_libs,
+                payload,
+            })
         }
     }
 }
