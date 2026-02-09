@@ -384,13 +384,11 @@ impl PolicyProviderManager {
 
         for (provider_type, entry) in groups {
             let names: Vec<String> = entry.libs.iter().map(|lib| lib.name().into()).collect();
-            let fds_count = names.len() as u32;
 
             segments.push(IpcSegment {
                 provider_type,
                 names: if names.is_empty() { None } else { Some(names) },
                 data: entry.data,
-                fds_count,
             });
             all_libs.extend(entry.libs);
         }

@@ -37,10 +37,6 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
                         libs.push(lib);
                     }
                 }
-            } else {
-                for _ in 0..segment.fds_count {
-                    fds.next();
-                }
             }
 
             groups.insert(segment.provider_type, (libs, segment.data));

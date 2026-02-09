@@ -1,7 +1,7 @@
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use nix::libc::{c_int, c_long};
 use strum_macros::{AsRefStr, EnumIter};
@@ -162,7 +162,6 @@ pub struct IpcSegment {
     pub provider_type: ProviderType,
     pub names: Option<Vec<String>>,
     pub data: Option<Vec<u8>>,
-    pub fds_count: u32,
 }
 
 impl IpcPayload {
@@ -171,8 +170,16 @@ impl IpcPayload {
         conn_fd: OwnedFd,
         fds: impl IntoIterator<Item = BorrowedFd<'fd>>,
     ) -> Result<()> {
+        const SCM_MAX_FD: usize = 253;
+
         let raw_fds: Vec<RawFd> = fds.into_iter().map(|fd| fd.as_raw_fd()).collect();
         let data = wincode::serialize(self)?;
+
+        assert!(
+            raw_fds.len() <= SCM_MAX_FD,
+            "too many fds to send: {} (max {SCM_MAX_FD})",
+            raw_fds.len()
+        );
 
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
 
@@ -186,7 +193,13 @@ impl IpcPayload {
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
         let mut buffer = [0u8; size_of::<[usize; 2]>()];
 
-        conn.recv(&mut buffer)?;
+        let received = conn.recv(&mut buffer)?;
+        if received != size_of::<[usize; 2]>() {
+            bail!(
+                "incomplete IPC header: expected {} bytes, got {received}",
+                size_of::<[usize; 2]>()
+            );
+        }
 
         let pair: &[usize; 2] = bytemuck::from_bytes(&buffer);
         let (buffer_len, fds_len) = (pair[0], pair[1]);
@@ -194,7 +207,19 @@ impl IpcPayload {
         let mut buffer: Vec<_> = vec![0; buffer_len];
         let mut raw_fds: Vec<RawFd> = vec![0; fds_len];
 
-        conn.recv_fds(&mut buffer, &mut raw_fds)?;
+        let (bytes_received, truncated, fds_received) = conn.recv_fds(&mut buffer, &mut raw_fds)?;
+
+        if truncated {
+            bail!("IPC payload was truncated");
+        }
+
+        if bytes_received != buffer_len {
+            bail!("incomplete IPC payload: expected {buffer_len} bytes, got {bytes_received}");
+        }
+
+        if fds_received != fds_len {
+            bail!("incomplete IPC fds: expected {fds_len} fds, got {fds_received}");
+        }
 
         let payload: IpcPayload = wincode::deserialize(&buffer)?;
         let fds = raw_fds
