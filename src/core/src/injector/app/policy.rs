@@ -16,11 +16,10 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{Debug, Display, Formatter};
 use std::io::{Seek, SeekFrom, Write};
 use std::ops::Deref;
-use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::{fmt, fs, mem};
-use uds::UnixSeqpacketConn;
 use zynx_bridge_types::zygote::{IpcPayload, IpcSegment, ProviderType};
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
@@ -172,6 +171,12 @@ impl AsRawFd for InjectLibrary {
     }
 }
 
+impl AsFd for InjectLibrary {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_file().as_fd()
+    }
+}
+
 pub enum PolicyDecision {
     Allow {
         libs: Vec<Arc<InjectLibrary>>,
@@ -231,15 +236,8 @@ impl InjectPayload {
     }
 
     pub fn send_to(self, conn_fd: OwnedFd) -> Result<()> {
-        let fds: Vec<RawFd> = self.libs.iter().map(|lib| lib.as_raw_fd()).collect();
-        let data = wincode::serialize(&self.payload)?;
-
-        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
-
-        conn.send(bytemuck::bytes_of(&[data.len(), fds.len()]))?;
-        conn.send_fds(&data, &fds)?;
-
-        Ok(())
+        self.payload
+            .send_to(conn_fd, self.libs.iter().map(|lib| lib.as_fd()))
     }
 }
 

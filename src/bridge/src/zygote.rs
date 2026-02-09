@@ -22,25 +22,24 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
     if bridge_args.conn_fd >= 0 {
         info!("connection fd: {}", bridge_args.conn_fd);
 
-        let (payload, fds) = IpcPayload::recv_from(bridge_args.conn_fd)?;
+        let (payload, fds) =
+            IpcPayload::recv_from(unsafe { OwnedFd::from_raw_fd(bridge_args.conn_fd) })?;
 
-        let mut fd_cursor = 0;
+        let mut fds = fds.into_iter();
         let mut groups: HashMap<ProviderType, (Vec<Library>, Option<Vec<u8>>)> = HashMap::new();
 
         for segment in payload.segments {
-            let count = segment.fds_count as usize;
-            let seg_fds = &fds[fd_cursor..fd_cursor + count];
-            fd_cursor += count;
-
             let mut libs = Vec::new();
 
             if let Some(names) = segment.names {
-                for (name, &fd) in names.into_iter().zip(seg_fds) {
-                    if let Ok(lib) =
-                        Library::open(name, unsafe { OwnedFd::from_raw_fd(fd) }).inspect_log_error()
-                    {
+                for (name, fd) in names.into_iter().zip(fds.by_ref()) {
+                    if let Ok(lib) = Library::open(name, fd).inspect_log_error() {
                         libs.push(lib);
                     }
+                }
+            } else {
+                for _ in 0..segment.fds_count {
+                    fds.next();
                 }
             }
 

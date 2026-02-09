@@ -1,5 +1,5 @@
 use std::mem::size_of;
-use std::os::fd::{FromRawFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 use anyhow::Result;
 use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
@@ -166,8 +166,24 @@ pub struct IpcSegment {
 }
 
 impl IpcPayload {
-    pub fn recv_from(conn_fd: RawFd) -> Result<(Self, Vec<RawFd>)> {
-        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd) };
+    pub fn send_to<'fd>(
+        &self,
+        conn_fd: OwnedFd,
+        fds: impl IntoIterator<Item = BorrowedFd<'fd>>,
+    ) -> Result<()> {
+        let raw_fds: Vec<RawFd> = fds.into_iter().map(|fd| fd.as_raw_fd()).collect();
+        let data = wincode::serialize(self)?;
+
+        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
+
+        conn.send(bytemuck::bytes_of(&[data.len(), raw_fds.len()]))?;
+        conn.send_fds(&data, &raw_fds)?;
+
+        Ok(())
+    }
+
+    pub fn recv_from(conn_fd: OwnedFd) -> Result<(Self, Vec<OwnedFd>)> {
+        let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
         let mut buffer = [0u8; size_of::<[usize; 2]>()];
 
         conn.recv(&mut buffer)?;
@@ -176,11 +192,15 @@ impl IpcPayload {
         let (buffer_len, fds_len) = (pair[0], pair[1]);
 
         let mut buffer: Vec<_> = vec![0; buffer_len];
-        let mut fds: Vec<_> = vec![0; fds_len];
+        let mut raw_fds: Vec<RawFd> = vec![0; fds_len];
 
-        conn.recv_fds(&mut buffer, &mut fds)?;
+        conn.recv_fds(&mut buffer, &mut raw_fds)?;
 
         let payload: IpcPayload = wincode::deserialize(&buffer)?;
+        let fds = raw_fds
+            .into_iter()
+            .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
+            .collect();
 
         Ok((payload, fds))
     }
