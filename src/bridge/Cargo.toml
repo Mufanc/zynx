@@ -15,11 +15,8 @@ zygisk = ["zynx-bridge-shared/zygisk", "zynx-zygisk-compat"]
 [dependencies]
 android_logger = { workspace = true }
 anyhow = { workspace = true }
-bytemuck = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true, features = ["mman", "user"] }
-uds = { workspace = true }
-wincode = { workspace = true }
 zynx-bridge-shared = { path = "../bridge-shared" }
 zynx-misc = { path = "../misc" }
 zynx-zygisk-compat = { path = "../zygisk-compat", optional = true }
