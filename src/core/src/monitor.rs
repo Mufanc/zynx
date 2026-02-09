@@ -11,7 +11,7 @@ use nix::unistd::Pid;
 use parking_lot::Mutex;
 use std::ffi::CStr;
 use std::mem;
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 use tokio::io::Interest;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::Mutex as AsyncMutex;
@@ -26,8 +26,8 @@ pub struct Config {
 }
 
 pub struct Monitor {
-    channel: Arc<AsyncMutex<AsyncFd<RingBuf<MapData>>>>,
-    zygote_info: Arc<Mutex<Array<MapData, i32>>>,
+    channel: AsyncMutex<AsyncFd<RingBuf<MapData>>>,
+    zygote_info: Mutex<Array<MapData, i32>>,
     _ebpf: Ebpf,
 }
 
@@ -134,8 +134,8 @@ impl Monitor {
         let zygote_info = take_map(&mut ebpf, "ZYGOTE_INFO")?;
 
         Ok(Self {
-            channel: Arc::new(AsyncMutex::new(channel)),
-            zygote_info: Arc::new(Mutex::new(zygote_info)),
+            channel: AsyncMutex::new(channel),
+            zygote_info: Mutex::new(zygote_info),
             _ebpf: ebpf,
         })
     }

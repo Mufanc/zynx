@@ -19,7 +19,7 @@ use zynx_utils::ext::ResultExt;
 
 pub const ZYGOTE_NAME: &str = "zygote64";
 
-static ZYGOTE_TRACER: Lazy<Arc<RwLock<Option<ZygoteTracer>>>> = Lazy::new(Default::default);
+static ZYGOTE_TRACER: Lazy<RwLock<Option<ZygoteTracer>>> = Lazy::new(Default::default);
 
 #[derive(Clone)]
 pub struct ZygoteMaps(Arc<MemoryMaps>);
