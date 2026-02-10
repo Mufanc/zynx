@@ -118,7 +118,9 @@ impl PackageInfoService {
     }
 
     pub fn instance() -> &'static Self {
-        PACKAGE_INFO_SERVICE.wait()
+        PACKAGE_INFO_SERVICE
+            .get()
+            .expect("package info service not initialized")
     }
 
     pub fn query(&self, uid: Uid) -> Option<PackageInfoListLocked<'_>> {

@@ -1,4 +1,5 @@
 use crate::android::packages::PackageInfoService;
+use crate::config::ZynxConfigs;
 use crate::injector::app::policy::{EmbryoCheckArgs, PolicyDecision, PolicyProvider};
 use async_trait::async_trait;
 use zynx_bridge_shared::policy::debugger::DebuggerParams;
@@ -15,6 +16,10 @@ impl PolicyProvider for DebuggerPolicyProvider {
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+        if ZynxConfigs::instance().disable_debugger {
+            return PolicyDecision::Deny;
+        }
+
         let Some(pkgs) = PackageInfoService::instance().query(args.uid) else {
             return PolicyDecision::Deny;
         };

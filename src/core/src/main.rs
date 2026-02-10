@@ -1,12 +1,14 @@
 mod android;
 mod binary;
 mod cli;
+mod config;
 mod daemon;
 mod injector;
 mod misc;
 mod monitor;
 
 use crate::cli::Cli;
+use crate::config::ZynxConfigs;
 use crate::misc::inject_panic_handler;
 use anyhow::Result;
 use log::LevelFilter;
@@ -39,6 +41,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    ZynxConfigs::init(&args)?;
     daemon::daemonize_if_needed()?;
 
     Builder::new_multi_thread()
