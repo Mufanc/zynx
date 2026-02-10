@@ -9,6 +9,20 @@ Zynx (**Zy**gote **N**e**x**us) is a dynamic code injection framework for Androi
 - **Stealthy** — traceless operation with no mounts; non-target processes are left completely untouched
 - **Policy framework** — determines per-app injection decisions with async two-phase checks
 
+## Usage
+
+### LiteLoader
+
+Place shared libraries in `/data/adb/zynx/liteloader/` with the naming convention `<package_name>-<library_name>.so`. They will be automatically loaded into the target app process.
+
+### Force Debuggable
+
+Set the system property `debug.zynx.debuggable.<package_name>` to `1` to force-enable debugging for the specified app:
+
+```shell
+setprop debug.zynx.debuggable.com.example.app 1
+```
+
 ## License
 
 MIT

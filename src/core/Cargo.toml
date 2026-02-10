@@ -19,7 +19,7 @@ daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
-jni-sys = { workspace = true }
+jni = { workspace = true }
 log = { workspace = true }
 lzma-rs = { workspace = true }
 memfd = { workspace = true }
@@ -36,6 +36,7 @@ scopeguard = { workspace = true }
 strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
+wincode = { workspace = true }
 zynx-bridge = { path = "../bridge" }
 zynx-bridge-shared = { path = "../bridge-shared" }
 zynx-misc = { path = "../misc" }

@@ -2,7 +2,7 @@ use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 use anyhow::{Result, bail};
-use jni_sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
+use jni::sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use nix::libc::{c_int, c_long};
 use strum_macros::{AsRefStr, EnumIter};
 use uds::UnixSeqpacketConn;
@@ -146,8 +146,8 @@ impl SpecializeArgs {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, SchemaRead, SchemaWrite)]
 pub enum ProviderType {
+    Debugger,
     LiteLoader,
-
     #[cfg(feature = "zygisk")]
     Zygisk,
 }

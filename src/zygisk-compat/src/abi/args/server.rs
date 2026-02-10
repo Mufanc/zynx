@@ -1,4 +1,4 @@
-use jni_sys::{jint, jintArray, jlong};
+use jni::sys::{jint, jintArray, jlong};
 use nix::libc::c_long;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;

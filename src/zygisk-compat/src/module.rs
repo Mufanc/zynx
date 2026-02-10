@@ -4,7 +4,7 @@ use crate::abi::args::server::ServerSpecializeArgs;
 use crate::abi::flags::ZygiskOption;
 use crate::abi::module::ModuleAbi;
 use anyhow::Result;
-use jni_sys::JNIEnv;
+use jni::sys::JNIEnv;
 use log::warn;
 use std::marker::PhantomPinned;
 use std::pin::Pin;

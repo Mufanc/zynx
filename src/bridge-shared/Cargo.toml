@@ -9,7 +9,7 @@ zygisk = []
 [dependencies]
 anyhow = { workspace = true }
 bytemuck = { workspace = true }
-jni-sys = { workspace = true }
+jni = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
 strum = { workspace = true }

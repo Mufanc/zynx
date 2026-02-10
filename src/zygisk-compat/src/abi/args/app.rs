@@ -1,4 +1,4 @@
-use jni_sys::{jboolean, jint, jintArray, jobjectArray, jstring};
+use jni::sys::{jboolean, jint, jintArray, jobjectArray, jstring};
 use nix::libc::c_long;
 use std::marker::PhantomData;
 use std::mem::ManuallyDrop;
@@ -68,7 +68,7 @@ impl<'a> AppSpecializeArgs<'a> {
     pub fn new(args: &'a mut SpecializeArgs, version: c_long) -> Self {
         macro_rules! as_ptr {
             ($name: ident) => {
-                &mut args.$name as *mut _
+                &mut args.$name as *mut _ as _
             };
         }
 

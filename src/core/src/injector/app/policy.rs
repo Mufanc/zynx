@@ -1,8 +1,10 @@
+mod debugger;
 mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
 
 use crate::android::packages::PackageInfoListLocked;
+use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
 use anyhow::{Result, anyhow};
@@ -186,6 +188,26 @@ pub enum PolicyDecision {
     Deny,
 }
 
+impl PolicyDecision {
+    pub fn allow() -> Self {
+        PolicyDecision::Allow {
+            libs: vec![],
+            data: None,
+        }
+    }
+
+    pub fn allow_with_libs(libs: Vec<Arc<InjectLibrary>>) -> Self {
+        PolicyDecision::Allow { libs, data: None }
+    }
+
+    pub fn allow_with_data(data: Vec<u8>) -> Self {
+        PolicyDecision::Allow {
+            libs: vec![],
+            data: Some(data),
+        }
+    }
+}
+
 impl Debug for PolicyDecision {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         match self {
@@ -250,6 +272,7 @@ impl PolicyProviderManager {
     pub async fn init() -> Result<()> {
         let mut instance = Self::default();
 
+        instance.register::<DebuggerPolicyProvider>().await?;
         instance.register::<LiteLoaderPolicyProvider>().await?;
 
         #[cfg(feature = "zygisk")]

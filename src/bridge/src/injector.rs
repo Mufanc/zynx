@@ -1,5 +1,7 @@
+mod debugger;
 mod liteloader;
 
+use crate::injector::debugger::DebuggerProviderHandler;
 use crate::injector::liteloader::LiteLoaderProviderHandler;
 use anyhow::Result;
 use log::error;
@@ -25,6 +27,7 @@ impl ProviderHandlerRegistry {
     pub fn new() -> Self {
         let mut instance = Self::default();
 
+        instance.register(DebuggerProviderHandler);
         instance.register(LiteLoaderProviderHandler);
 
         #[cfg(feature = "zygisk")]

@@ -2,7 +2,7 @@ use crate::injector::ptrace::RemoteProcess;
 use crate::injector::ptrace::ext::remote_call::PtraceRemoteCallExt;
 use crate::{build_args, misc};
 use anyhow::Result;
-use jni_sys::{JNIEnv, jchar, jstring};
+use jni::sys::{JNIEnv, jchar, jstring};
 use nix::libc::c_long;
 use scopeguard::defer;
 use std::fmt::Display;
@@ -12,7 +12,7 @@ use zynx_misc::ext::ResultExt;
 #[macro_export]
 macro_rules! jni_fn {
     ($func: ident) => {
-        std::mem::offset_of!(jni_sys::JNINativeInterface__1_6, $func)
+        std::mem::offset_of!(jni::sys::JNINativeInterface_, $func)
     };
 }
 

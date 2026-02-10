@@ -1,7 +1,7 @@
 use crate::abi::flags::ZygiskOption;
 use crate::abi::module::ModuleAbi;
 use crate::module::ZygiskModule;
-use jni_sys::{JNIEnv, JNINativeMethod};
+use jni::sys::{JNIEnv, JNINativeMethod};
 use log::warn;
 use nix::libc::{c_char, c_int, c_long, dev_t, ino_t};
 use std::ffi::c_void;
