@@ -51,5 +51,18 @@ wincode = { version = "0.4" }
 unused_async = "warn"
 uninlined_format_args = "warn"
 
+[profile.release]
+lto = true
+opt-level = "s"
+strip = true
+split-debuginfo = "packed"
+debug = "line-tables-only"
+
+[profile.release.package.zynx-core]
+codegen-units = 1
+
+[profile.release.package.zynx-bridge]
+codegen-units = 1
+
 [profile.release.package.zynx-ebpf]
 codegen-units = 1
