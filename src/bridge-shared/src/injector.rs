@@ -6,10 +6,18 @@ pub trait ProviderHandler: Send + Sync + 'static {
     const TYPE: ProviderType;
 
     fn on_specialize_pre(
-        args: &mut SpecializeArgs,
-        libs: Libraries,
-        data: Option<Vec<u8>>,
-    ) -> Result<()>;
+        _args: &mut SpecializeArgs,
+        _libs: &mut Libraries,
+        _data: &mut Option<Vec<u8>>,
+    ) -> Result<()> {
+        Ok(())
+    }
 
-    fn on_specialize_post(args: &SpecializeArgs) -> Result<()>;
+    fn on_specialize_post(
+        _args: &SpecializeArgs,
+        _libs: &mut Libraries,
+        _data: &mut Option<Vec<u8>>,
+    ) -> Result<()> {
+        Ok(())
+    }
 }

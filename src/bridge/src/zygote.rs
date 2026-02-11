@@ -13,9 +13,14 @@ use zynx_bridge_shared::zygote::{
 };
 use zynx_misc::ext::ResultExt;
 
+struct SpecializeContext {
+    args: SpecializeArgs,
+    handler: ProviderHandlerRegistry,
+    groups: HashMap<ProviderType, (Libraries, Option<Vec<u8>>)>,
+}
+
 thread_local! {
-    static G_ARGS: RefCell<Option<SpecializeArgs>> = RefCell::default();
-    static G_HANDLER: RefCell<Option<ProviderHandlerRegistry>> = RefCell::default();
+    static G_CONTEXT: RefCell<Option<SpecializeContext>> = RefCell::default();
 }
 
 fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()> {
@@ -37,15 +42,10 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
                 for (desc, fd) in descriptors.into_iter().zip(fds.by_ref()) {
                     match desc.lib_type {
                         LibraryType::Native => {
-                            if let Ok(lib) = NativeLibrary::open(desc.name, fd).inspect_log_error()
-                            {
-                                libs.native.push(lib);
-                            }
+                            libs.native.push(NativeLibrary::new(desc.name, fd));
                         }
                         LibraryType::Java => {
-                            if let Ok(lib) = JavaLibrary::open(desc.name, fd).inspect_log_error() {
-                                libs.java.push(lib);
-                            }
+                            libs.java.push(JavaLibrary::new(desc.name, fd));
                         }
                     }
                 }
@@ -55,31 +55,27 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
         }
 
         let handler = ProviderHandlerRegistry::new();
-        handler.dispatch_pre(&mut args_struct, groups);
+        handler.dispatch_pre(&mut args_struct, &mut groups);
 
-        G_HANDLER.with(|cell| {
-            *cell.borrow_mut() = Some(handler);
+        G_CONTEXT.with(|cell| {
+            *cell.borrow_mut() = Some(SpecializeContext {
+                args: args_struct.clone(),
+                handler,
+                groups,
+            });
         });
     }
 
     args_struct.write_back_to_slice(args);
-
-    G_ARGS.with(|cell| {
-        *cell.borrow_mut() = Some(args_struct);
-    });
-
     Ok(())
 }
 
 fn on_specialize_post() -> Result<()> {
-    G_ARGS.with(|args| {
-        G_HANDLER.with(|handler| {
-            if let (Some(args), Some(handler)) = (args.take(), handler.take()) {
-                handler.dispatch_post(&args)
-            }
-        });
+    G_CONTEXT.with(|cell| {
+        if let Some(mut ctx) = cell.borrow_mut().take() {
+            ctx.handler.dispatch_post(&ctx.args, &mut ctx.groups);
+        }
     });
-
     Ok(())
 }
 

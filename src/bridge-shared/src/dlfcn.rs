@@ -57,26 +57,46 @@ impl FromRawFd for DlextInfo {
 
 pub struct NativeLibrary {
     name: String,
-    handle: *const c_void,
+    fd: Option<OwnedFd>,
+    handle: Option<*const c_void>,
     auto_close: bool,
 }
 
 impl NativeLibrary {
-    pub fn open(name: String, fd: OwnedFd) -> Result<Self> {
-        info!("dlopen library: {}, fd = {}", name, fd.as_raw_fd());
+    pub fn new(name: String, fd: OwnedFd) -> Self {
+        Self {
+            name,
+            fd: Some(fd),
+            handle: None,
+            auto_close: false,
+        }
+    }
+
+    pub fn open(&mut self) -> Result<()> {
+        let fd = self
+            .fd
+            .take()
+            .ok_or_else(|| anyhow!("already opened or fd consumed"))?;
+
+        info!("dlopen library: {}, fd = {}", self.name, fd.as_raw_fd());
 
         let info = unsafe { DlextInfo::from_raw_fd(fd.as_raw_fd()) };
         let handle = unsafe { system::android_dlopen_ext(c"jit-cache".as_ptr(), RTLD_NOW, &info) };
 
         if handle.is_null() {
-            return Err(anyhow!("dlopen library {} failed: {:?}", name, dlerror()));
+            return Err(anyhow!(
+                "dlopen library {} failed: {:?}",
+                self.name,
+                dlerror()
+            ));
         }
 
-        Ok(Self {
-            name,
-            handle,
-            auto_close: false,
-        })
+        self.handle = Some(handle);
+        Ok(())
+    }
+
+    pub fn is_opened(&self) -> bool {
+        self.handle.is_some()
     }
 
     pub fn name(&self) -> &str {
@@ -84,10 +104,12 @@ impl NativeLibrary {
     }
 
     pub fn dlsym(&self, symbol: &str) -> Result<*const c_void> {
+        let handle = self.handle.ok_or_else(|| anyhow!("library not opened"))?;
+
         let symbol = CString::new(symbol)?;
 
         unsafe {
-            let address = system::dlsym(self.handle as _, symbol.as_ptr());
+            let address = system::dlsym(handle as _, symbol.as_ptr());
 
             if address.is_null() {
                 return Err(dlerror());
@@ -98,10 +120,12 @@ impl NativeLibrary {
     }
 
     pub fn dlclose(mut self) {
-        unsafe {
-            system::dlclose(self.handle as _);
-            self.auto_close = false;
+        if let Some(handle) = self.handle.take() {
+            unsafe {
+                system::dlclose(handle as _);
+            }
         }
+        self.auto_close = false;
     }
 
     pub fn auto_close_on_drop(&mut self) {
@@ -111,9 +135,11 @@ impl NativeLibrary {
 
 impl Drop for NativeLibrary {
     fn drop(&mut self) {
-        if self.auto_close {
+        if self.auto_close
+            && let Some(handle) = self.handle
+        {
             unsafe {
-                system::dlclose(self.handle as _);
+                system::dlclose(handle as _);
             }
         }
     }
@@ -125,7 +151,7 @@ pub struct JavaLibrary {
 }
 
 impl JavaLibrary {
-    pub fn open(name: String, fd: OwnedFd) -> Result<Self> {
+    pub fn new(name: String, fd: OwnedFd) -> Self {
         todo!()
     }
 }

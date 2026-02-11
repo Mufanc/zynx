@@ -11,10 +11,10 @@ impl ProviderHandler for DebuggerProviderHandler {
 
     fn on_specialize_pre(
         args: &mut SpecializeArgs,
-        _libs: Libraries,
-        data: Option<Vec<u8>>,
+        _libs: &mut Libraries,
+        data: &mut Option<Vec<u8>>,
     ) -> Result<()> {
-        if let Some(bytes) = &data {
+        if let Some(bytes) = data {
             let params: DebuggerParams = wincode::deserialize(bytes)?;
 
             if params.force_debuggable {
@@ -26,10 +26,6 @@ impl ProviderHandler for DebuggerProviderHandler {
             }
         }
 
-        Ok(())
-    }
-
-    fn on_specialize_post(_args: &SpecializeArgs) -> Result<()> {
         Ok(())
     }
 }

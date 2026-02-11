@@ -9,6 +9,7 @@ jni = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
 zynx-bridge-shared = { path = "../bridge-shared", features = ["zygisk"] }
+zynx-misc = { path = "../misc" }
 
 [lints]
 workspace = true

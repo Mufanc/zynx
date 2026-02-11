@@ -5,5 +5,5 @@ xtask = "run --package xtask --"
 ROOT_DIR = { value = ".", relative = true }
 PROFILE = "debug"  # build debug by default
 
-[build]
-rustflags = ["-C", "llvm-args=-align-all-functions=8"]
+#[build]
+#rustflags = ["-C", "llvm-args=-align-all-functions=8"]

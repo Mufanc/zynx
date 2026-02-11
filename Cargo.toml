@@ -66,3 +66,7 @@ codegen-units = 1
 
 [profile.release.package.zynx-ebpf]
 codegen-units = 1
+opt-level = 0
+strip = false
+split-debuginfo = "off"
+debug = false

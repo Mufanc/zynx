@@ -21,7 +21,7 @@ use std::ops::Deref;
 use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
-use std::{fmt, fs, mem};
+use std::{env, fmt, fs, mem};
 use zynx_bridge_shared::zygote::{
     IpcPayload, IpcSegment, LibraryDescriptor, LibraryType, ProviderType,
 };
@@ -152,7 +152,10 @@ impl InjectLibrary {
         file.write_all(&fs::read(path)?)?;
         file.sync_data()?;
         file.seek(SeekFrom::Start(0))?;
-        file.mark_as_magisk_file();
+
+        if env::var("MODDIR").is_ok() {
+            file.mark_as_magisk_file();
+        }
 
         fd.add_seals(&[
             FileSeal::SealGrow,

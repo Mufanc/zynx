@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
+use zynx_misc::ext::ResultExt;
 
 mod abi;
 mod module;
@@ -19,13 +20,19 @@ impl ProviderHandler for ZygiskProviderHandler {
 
     fn on_specialize_pre(
         args: &mut SpecializeArgs,
-        libs: Libraries,
-        _data: Option<Vec<u8>>,
+        libs: &mut Libraries,
+        _data: &mut Option<Vec<u8>>,
     ) -> Result<()> {
         let mut modules = Vec::new();
 
-        for lib in libs.native {
-            let module = ZygiskModule::new(lib)?;
+        for mut lib in libs.native.drain(..) {
+            let Ok(()) = lib.open().inspect_log_error() else {
+                continue;
+            };
+
+            let Ok(module) = ZygiskModule::new(lib).inspect_log_error() else {
+                continue;
+            };
 
             if module.call_entry(args.env) {
                 modules.push(module);
@@ -43,7 +50,11 @@ impl ProviderHandler for ZygiskProviderHandler {
         Ok(())
     }
 
-    fn on_specialize_post(args: &SpecializeArgs) -> Result<()> {
+    fn on_specialize_post(
+        args: &SpecializeArgs,
+        _libs: &mut Libraries,
+        _data: &mut Option<Vec<u8>>,
+    ) -> Result<()> {
         G_MODULES.with(|cell| {
             let modules = cell.take();
             modules

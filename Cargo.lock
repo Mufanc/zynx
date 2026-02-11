@@ -2207,4 +2207,5 @@ dependencies = [
  "log",
  "nix",
  "zynx-bridge-shared",
+ "zynx-misc",
 ]
