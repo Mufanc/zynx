@@ -1,12 +1,17 @@
-use anyhow::{Error, Result, anyhow};
-use log::info;
+use anyhow::{Context, Error, Result, anyhow};
+use jni::JNIEnv;
+use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
+use jni::strings::JavaStr;
+use log::{info, warn};
 use nix::libc::{RTLD_NOW, c_int, off64_t, size_t};
 use std::ffi::{CStr, CString, c_void};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
 
 mod system {
-    use crate::dlfcn::DlextInfo;
+    use crate::remote_lib::DlextInfo;
     use nix::libc::{c_char, c_int};
     use std::ffi::c_void;
 
@@ -147,12 +152,94 @@ impl Drop for NativeLibrary {
 
 pub struct JavaLibrary {
     name: String,
-    fd: OwnedFd,
+    fd: Option<OwnedFd>,
+    class_loader: Option<GlobalRef>,
 }
 
 impl JavaLibrary {
     pub fn new(name: String, fd: OwnedFd) -> Self {
-        todo!()
+        Self {
+            name,
+            fd: Some(fd),
+            class_loader: None,
+        }
+    }
+
+    pub fn load(&mut self, env: jni::sys::JNIEnv) -> Result<()> {
+        info!("loading java library: {}", self.name);
+
+        // Read dex content from fd
+        let fd = self.fd.take().context("duplicate called")?;
+        let mut file: File = fd.into();
+
+        // Fixme: use mmap instead
+        file.seek(SeekFrom::Start(0))?;
+
+        let file_size = file.metadata().context("failed to stat file")?.len() as usize;
+        let mut file_data = {
+            let mut buffer = Vec::with_capacity(file_size);
+            file.read_to_end(&mut buffer)?;
+            buffer
+        };
+
+        let mut env = unsafe { JNIEnv::from_raw(env as _) }?;
+
+        // Create InMemoryDexClassLoader with system classloader as parent
+        let class_loader_class = env.find_class("java/lang/ClassLoader")?;
+        let system_class_loader = env.call_static_method(
+            class_loader_class,
+            "getSystemClassLoader",
+            "()Ljava/lang/ClassLoader;",
+            &[],
+        )?;
+
+        let inmem_class_loader_class = env.find_class("dalvik/system/InMemoryDexClassLoader")?;
+
+        let buffer =
+            unsafe { env.new_direct_byte_buffer(file_data.as_mut_ptr(), file_data.len())? };
+
+        let class_loader = env.new_object(
+            inmem_class_loader_class,
+            "(Ljava/nio/ByteBuffer;Ljava/lang/ClassLoader;)V",
+            &[JValue::Object(&buffer), system_class_loader.borrow()],
+        )?;
+
+        self.class_loader = Some(env.new_global_ref(&class_loader)?);
+        env.delete_local_ref(buffer)?;
+
+        // Load entry class via ClassLoader.loadClass (env.find_class uses system classloader)
+        let class_name = env.new_string("xyz.mufanc.zynx.Main")?;
+        let main_class = env.call_method(
+            &class_loader,
+            "loadClass",
+            "(Ljava/lang/String;)Ljava/lang/Class;",
+            &[JValue::Object(&class_name)],
+        )?;
+        let main_class: JClass = main_class.l()?.into();
+
+        // Invoke Main.main(String[]) with empty args
+        let empty_args = env.new_object_array(0, "java/lang/String", &JObject::null())?;
+
+        env.call_static_method(
+            main_class,
+            "main",
+            "([Ljava/lang/String;)V",
+            &[JValue::Object(&empty_args)],
+        )?;
+
+        let exception = env.exception_occurred()?;
+
+        if !exception.is_null() {
+            let message = env.call_method(exception, "toString", "()Ljava/lang/String;", &[])?;
+            let message = message.l()?.into();
+            let message = JavaStr::from_env(&env, &message)?;
+
+            warn!("failed to call entry: {:?}", message.to_string_lossy());
+
+            env.exception_clear()?;
+        }
+
+        Ok(())
     }
 }
 

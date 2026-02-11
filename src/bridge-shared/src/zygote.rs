@@ -3,6 +3,7 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
 use anyhow::{Result, bail};
 use jni::sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
+use log::debug;
 use nix::libc::{c_int, c_long};
 use strum_macros::{AsRefStr, EnumIter};
 use uds::UnixSeqpacketConn;
@@ -158,6 +159,15 @@ pub enum LibraryType {
     Java,
 }
 
+impl LibraryType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            LibraryType::Native => "native",
+            LibraryType::Java => "java",
+        }
+    }
+}
+
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct LibraryDescriptor {
     pub name: String,
@@ -177,11 +187,20 @@ pub struct IpcSegment {
 }
 
 impl IpcPayload {
-    pub fn send_to<'fd>(
+    pub fn send_to<'a>(
         &self,
         conn_fd: OwnedFd,
-        fds: impl IntoIterator<Item = BorrowedFd<'fd>>,
+        fds: impl IntoIterator<Item = BorrowedFd<'a>>,
     ) -> Result<()> {
+        let libraries = self
+            .segments
+            .iter()
+            .by_ref()
+            .map(|seg| &seg.libraries)
+            .collect::<Vec<_>>();
+
+        debug!("sending libraries: {libraries:?}");
+
         const SCM_MAX_FD: usize = 253;
 
         let raw_fds: Vec<RawFd> = fds.into_iter().map(|fd| fd.as_raw_fd()).collect();

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::policy::debugger::DebuggerParams;
+use zynx_bridge_shared::remote_lib::Libraries;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 
 pub struct DebuggerProviderHandler;

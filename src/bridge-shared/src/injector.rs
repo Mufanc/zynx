@@ -1,4 +1,4 @@
-use crate::dlfcn::Libraries;
+use crate::remote_lib::Libraries;
 use crate::zygote::{ProviderType, SpecializeArgs};
 use anyhow::Result;
 

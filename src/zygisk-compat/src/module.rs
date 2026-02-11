@@ -9,7 +9,7 @@ use log::warn;
 use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::{mem, ptr};
-use zynx_bridge_shared::dlfcn::NativeLibrary;
+use zynx_bridge_shared::remote_lib::NativeLibrary;
 use zynx_bridge_shared::zygote::SpecializeArgs;
 
 pub type PinnedZygiskModule = Pin<Box<ZygiskModule>>;

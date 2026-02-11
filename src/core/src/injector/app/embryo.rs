@@ -29,7 +29,7 @@ use std::os::fd::{AsFd, FromRawFd};
 use std::{fmt, mem};
 use syscalls::Sysno;
 use tokio::runtime::Handle;
-use zynx_bridge_shared::dlfcn::DlextInfo;
+use zynx_bridge_shared::remote_lib::DlextInfo;
 use zynx_bridge_shared::zygote::{BridgeArgs, SpecializeArgs};
 use zynx_misc::ext::ResultExt;
 

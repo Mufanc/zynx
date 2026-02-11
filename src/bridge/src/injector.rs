@@ -6,8 +6,8 @@ use crate::injector::liteloader::LiteLoaderProviderHandler;
 use anyhow::Result;
 use log::error;
 use std::collections::HashMap;
-use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
+use zynx_bridge_shared::remote_lib::Libraries;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 use zynx_zygisk_compat::ZygiskProviderHandler;
 

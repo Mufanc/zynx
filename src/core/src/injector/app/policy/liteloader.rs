@@ -18,7 +18,8 @@ use tokio::task;
 use zynx_bridge_shared::zygote::ProviderType;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
-static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.so$").unwrap());
+static LITE_LIBRARY_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(.+)-(.+)\.(so|dex)$").unwrap());
 
 type LibrariesArc = Arc<RwLock<HashMap<String, Vec<Arc<InjectLibrary>>>>>;
 
@@ -32,10 +33,11 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
             None => continue,
         };
 
-        let (package_name, library_name) = match LITE_LIBRARY_REGEX.captures(file_name) {
+        let (package_name, library_name, extension) = match LITE_LIBRARY_REGEX.captures(file_name) {
             Some(caps) => (
                 caps.get(1).unwrap().as_str().to_string(),
                 caps.get(2).unwrap().as_str().to_string(),
+                caps.get(3).unwrap().as_str(),
             ),
             None => {
                 warn!("skipping file with invalid name: {file_name}");
@@ -43,12 +45,19 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
             }
         };
 
-        let library = InjectLibrary::new(path, &format!("liteloader::{library_name}"))?;
+        let name = format!("liteloader::{library_name}");
+        let library = match extension {
+            "so" => InjectLibrary::new(path, &name)?,
+            "dex" => InjectLibrary::new_java(path, &name)?,
+            _ => unreachable!(),
+        };
 
         libs.entry(package_name)
             .or_default()
             .push(Arc::new(library));
     }
+
+    info!("found libs: {libs:?}");
 
     Ok(libs)
 }

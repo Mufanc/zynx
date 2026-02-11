@@ -7,7 +7,7 @@ fn init_logger() {
     android_logger::init_once(
         android_logger::Config::default()
             .with_max_level(if cfg!(debug_assertions) {
-                LevelFilter::Trace
+                LevelFilter::Debug
             } else {
                 LevelFilter::Info
             })

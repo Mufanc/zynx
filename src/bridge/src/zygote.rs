@@ -1,13 +1,13 @@
 use crate::init_logger;
 use crate::injector::ProviderHandlerRegistry;
 use anyhow::Result;
-use log::info;
+use log::{debug, info};
 use nix::libc::c_long;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use zynx_bridge_shared::dlfcn::{JavaLibrary, Libraries, NativeLibrary};
+use zynx_bridge_shared::remote_lib::{JavaLibrary, Libraries, NativeLibrary};
 use zynx_bridge_shared::zygote::{
     BridgeArgs, IpcPayload, LibraryType, ProviderType, SpecializeArgs,
 };
@@ -26,8 +26,10 @@ thread_local! {
 fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()> {
     let mut args_struct = SpecializeArgs::new(&mut *args, bridge_args.specialize_version);
 
+    info!("specialize args: {args_struct:?}");
+
     if bridge_args.conn_fd >= 0 {
-        info!("connection fd: {}", bridge_args.conn_fd);
+        debug!("connection fd: {}", bridge_args.conn_fd);
 
         let (payload, fds) =
             IpcPayload::recv_from(unsafe { OwnedFd::from_raw_fd(bridge_args.conn_fd) })?;
@@ -85,14 +87,14 @@ extern "C" fn specialize_pre(args: *mut c_long, args_count: usize, bridge_args: 
     let bridge_args = unsafe { &*bridge_args };
 
     init_logger();
-    info!("specialize args: {args:?}");
+    debug!("specialize args: {args:?}");
 
     on_specialize_pre(args, bridge_args).log_if_error()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn specialize_post() {
-    info!("post specialize");
+    debug!("post specialize");
 
     on_specialize_post().log_if_error()
 }

@@ -143,7 +143,7 @@ impl InjectLibrary {
         lib_type: LibraryType,
     ) -> Result<Self> {
         let path = path.as_ref();
-        let name = format!("zynx-inject::{name}");
+        let name = format!("zynx-inject::{}-{}", lib_type.as_str(), name);
 
         let fd = MemfdOptions::default().allow_sealing(true).create(&name)?;
 

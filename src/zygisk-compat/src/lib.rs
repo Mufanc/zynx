@@ -1,8 +1,8 @@
 use crate::module::{PinnedZygiskModule, ZygiskModule};
 use anyhow::Result;
 use std::cell::RefCell;
-use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
+use zynx_bridge_shared::remote_lib::Libraries;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 use zynx_misc::ext::ResultExt;
 
