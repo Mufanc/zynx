@@ -22,7 +22,6 @@ static LITE_LIBRARY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(.+)-(.+)\.s
 
 type LibrariesArc = Arc<RwLock<HashMap<String, Vec<Arc<InjectLibrary>>>>>;
 
-// Todo: async-fs
 fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
     let mut libs: HashMap<String, Vec<Arc<InjectLibrary>>> = HashMap::new();
 

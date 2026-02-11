@@ -103,7 +103,7 @@ impl RegSet {
 
 #[derive(Debug)]
 pub struct RemoteProcess {
-    pid: Pid,
+    pub pid: Pid,
     attached: AtomicBool,
 }
 

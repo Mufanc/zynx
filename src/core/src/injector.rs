@@ -32,7 +32,7 @@ fn handle_event(event: &Message) -> Result<()> {
 
                 let args = Process::new(pid.as_raw())?.cmdline()?;
 
-                if args.contains(&"--start-system-server".into()) {
+                if args.iter().any(|arg| arg == "--start-system-server") {
                     return ZygoteTracer::create(*pid);
                 }
 

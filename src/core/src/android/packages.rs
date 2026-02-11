@@ -64,7 +64,6 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
     })
 }
 
-// Todo: async-fs
 pub fn parse_package_list() -> Result<Vec<PackageInfo>> {
     let file = File::open(&*PACKAGE_LIST_FILE)?;
     let reader = BufReader::new(file);

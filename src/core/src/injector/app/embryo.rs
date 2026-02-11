@@ -23,7 +23,7 @@ use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
 use once_cell::sync::Lazy;
 use scopeguard::defer;
-use std::fmt;
+use std::{fmt, mem};
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::os::fd::{AsFd, FromRawFd};
@@ -156,6 +156,8 @@ impl EmbryoInjector {
     }
 
     async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<InjectPayload>> {
+        // Todo: selinux check execmem?
+
         let uid = Uid::from_raw(args.uid as _);
         let package_info = PackageInfoService::instance().query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
@@ -200,8 +202,6 @@ impl EmbryoInjector {
     ) -> Result<()> {
         info!("injecting process: {self}, raw_args = {raw_args:?}");
 
-        // Todo: selinux check execmem
-
         // Allocate RWX memory in the remote process for the trampoline code
         let trampoline_addr = self.mmap_ex(
             MmapOptions::new(
@@ -212,7 +212,9 @@ impl EmbryoInjector {
             .name("zynx::trampoline"),
         )?;
 
-        // Fixme: defer munmap trampoline if failed
+        let unmap_on_fail = scopeguard::guard_on_success((), |_| {
+            self.munmap(trampoline_addr, *TRAMPOLINE_SIZE).log_if_error();
+        });
 
         // Establish a unix socket connection with the remote process for IPC
         let conn = self.connect(trampoline_addr)?;
@@ -400,6 +402,8 @@ impl EmbryoInjector {
         trace!("dynasm bytecode: {bytecode:?}");
 
         self.poke_data(trampoline_addr, &bytecode)?;
+
+        mem::forget(unmap_on_fail);
 
         // Redirect execution to the trampoline and release the process
         regs.set_pc(trampoline_addr);

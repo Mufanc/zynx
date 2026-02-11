@@ -137,6 +137,8 @@ pub trait PtraceIpcExt {
     ) -> Result<usize>;
 
     fn mmap_ex(&self, options: MmapOptions) -> Result<usize>;
+    
+    fn munmap(&self, addr: usize, size: usize) -> Result<()>;
 
     fn take_fd(&self, remote_fd: RawFd) -> Result<OwnedFd>;
 
@@ -204,6 +206,15 @@ where
         }
 
         Ok(addr)
+    }
+
+    fn munmap(&self, addr: usize, size: usize) -> Result<()> {
+        self.call_remote_auto(
+            ("libc", "munmap"),
+            build_args!(addr, size)
+        )?;
+        
+        Ok(())
     }
 
     fn take_fd(&self, remote_fd: RawFd) -> Result<OwnedFd> {
