@@ -23,10 +23,10 @@ use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
 use once_cell::sync::Lazy;
 use scopeguard::defer;
-use std::{fmt, mem};
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::os::fd::{AsFd, FromRawFd};
+use std::{fmt, mem};
 use syscalls::Sysno;
 use tokio::runtime::Handle;
 use zynx_bridge_shared::dlfcn::DlextInfo;
@@ -213,7 +213,8 @@ impl EmbryoInjector {
         )?;
 
         let unmap_on_fail = scopeguard::guard_on_success((), |_| {
-            self.munmap(trampoline_addr, *TRAMPOLINE_SIZE).log_if_error();
+            self.munmap(trampoline_addr, *TRAMPOLINE_SIZE)
+                .log_if_error();
         });
 
         // Establish a unix socket connection with the remote process for IPC
