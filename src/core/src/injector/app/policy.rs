@@ -22,7 +22,9 @@ use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::{fmt, fs, mem};
-use zynx_bridge_shared::zygote::{IpcPayload, IpcSegment, ProviderType};
+use zynx_bridge_shared::zygote::{
+    IpcPayload, IpcSegment, LibraryDescriptor, LibraryType, ProviderType,
+};
 use zynx_misc::selinux::FileExt;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
@@ -131,10 +133,15 @@ impl<'a> Deref for EmbryoCheckArgs<'a> {
 pub struct InjectLibrary {
     name: String,
     fd: Memfd,
+    lib_type: LibraryType,
 }
 
 impl InjectLibrary {
-    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
+    fn new_internal<P: AsRef<Path>, N: Display>(
+        path: P,
+        name: &N,
+        lib_type: LibraryType,
+    ) -> Result<Self> {
         let path = path.as_ref();
         let name = format!("zynx-inject::{name}");
 
@@ -154,8 +161,17 @@ impl InjectLibrary {
             FileSeal::SealSeal,
         ])?;
 
-        Ok(Self { name, fd })
+        Ok(Self { name, fd, lib_type })
     }
+
+    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
+        Self::new_internal(path, name, LibraryType::Native)
+    }
+
+    pub fn new_java<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
+        Self::new_internal(path, name, LibraryType::Java)
+    }
+
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
 
@@ -164,6 +180,10 @@ impl InjectLibrary {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    pub fn lib_type(&self) -> LibraryType {
+        self.lib_type
     }
 }
 
@@ -406,11 +426,22 @@ impl PolicyProviderManager {
         let mut segments = Vec::new();
 
         for (provider_type, entry) in groups {
-            let names: Vec<String> = entry.libs.iter().map(|lib| lib.name().into()).collect();
+            let libraries: Vec<LibraryDescriptor> = entry
+                .libs
+                .iter()
+                .map(|lib| LibraryDescriptor {
+                    name: lib.name().into(),
+                    lib_type: lib.lib_type(),
+                })
+                .collect();
 
             segments.push(IpcSegment {
                 provider_type,
-                names: if names.is_empty() { None } else { Some(names) },
+                libraries: if libraries.is_empty() {
+                    None
+                } else {
+                    Some(libraries)
+                },
                 data: entry.data,
             });
             all_libs.extend(entry.libs);

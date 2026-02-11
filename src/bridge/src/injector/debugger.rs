@@ -1,5 +1,5 @@
 use anyhow::Result;
-use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::policy::debugger::DebuggerParams;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
@@ -11,7 +11,7 @@ impl ProviderHandler for DebuggerProviderHandler {
 
     fn on_specialize_pre(
         args: &mut SpecializeArgs,
-        _libs: Vec<Library>,
+        _libs: Libraries,
         data: Option<Vec<u8>>,
     ) -> Result<()> {
         if let Some(bytes) = &data {

@@ -6,15 +6,14 @@ use crate::injector::liteloader::LiteLoaderProviderHandler;
 use anyhow::Result;
 use log::error;
 use std::collections::HashMap;
-use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 use zynx_zygisk_compat::ZygiskProviderHandler;
 
 #[allow(clippy::type_complexity)]
 struct Handler {
-    on_specialize_pre:
-        Box<dyn Fn(&mut SpecializeArgs, Vec<Library>, Option<Vec<u8>>) -> Result<()>>,
+    on_specialize_pre: Box<dyn Fn(&mut SpecializeArgs, Libraries, Option<Vec<u8>>) -> Result<()>>,
     on_specialize_post: Box<dyn Fn(&SpecializeArgs) -> Result<()>>,
 }
 
@@ -49,7 +48,7 @@ impl ProviderHandlerRegistry {
     pub fn dispatch_pre(
         &self,
         args: &mut SpecializeArgs,
-        mut groups: HashMap<ProviderType, (Vec<Library>, Option<Vec<u8>>)>,
+        mut groups: HashMap<ProviderType, (Libraries, Option<Vec<u8>>)>,
     ) {
         for (provider_type, handler) in &self.handlers {
             let (libs, data) = groups.remove(provider_type).unwrap_or_default();

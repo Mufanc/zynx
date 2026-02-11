@@ -55,13 +55,13 @@ impl FromRawFd for DlextInfo {
     }
 }
 
-pub struct Library {
+pub struct NativeLibrary {
     name: String,
     handle: *const c_void,
     auto_close: bool,
 }
 
-impl Library {
+impl NativeLibrary {
     pub fn open(name: String, fd: OwnedFd) -> Result<Self> {
         info!("dlopen library: {}, fd = {}", name, fd.as_raw_fd());
 
@@ -109,7 +109,7 @@ impl Library {
     }
 }
 
-impl Drop for Library {
+impl Drop for NativeLibrary {
     fn drop(&mut self) {
         if self.auto_close {
             unsafe {
@@ -117,4 +117,21 @@ impl Drop for Library {
             }
         }
     }
+}
+
+pub struct JavaLibrary {
+    name: String,
+    fd: OwnedFd,
+}
+
+impl JavaLibrary {
+    pub fn open(name: String, fd: OwnedFd) -> Result<Self> {
+        todo!()
+    }
+}
+
+#[derive(Default)]
+pub struct Libraries {
+    pub native: Vec<NativeLibrary>,
+    pub java: Vec<JavaLibrary>,
 }

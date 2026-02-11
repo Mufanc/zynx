@@ -152,6 +152,18 @@ pub enum ProviderType {
     Zygisk,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub enum LibraryType {
+    Native,
+    Java,
+}
+
+#[derive(Debug, Clone, SchemaRead, SchemaWrite)]
+pub struct LibraryDescriptor {
+    pub name: String,
+    pub lib_type: LibraryType,
+}
+
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct IpcPayload {
     pub segments: Vec<IpcSegment>,
@@ -160,7 +172,7 @@ pub struct IpcPayload {
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct IpcSegment {
     pub provider_type: ProviderType,
-    pub names: Option<Vec<String>>,
+    pub libraries: Option<Vec<LibraryDescriptor>>,
     pub data: Option<Vec<u8>>,
 }
 

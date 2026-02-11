@@ -7,8 +7,10 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use zynx_bridge_shared::dlfcn::Library;
-use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
+use zynx_bridge_shared::dlfcn::{JavaLibrary, Libraries, NativeLibrary};
+use zynx_bridge_shared::zygote::{
+    BridgeArgs, IpcPayload, LibraryType, ProviderType, SpecializeArgs,
+};
 use zynx_misc::ext::ResultExt;
 
 thread_local! {
@@ -26,15 +28,25 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
             IpcPayload::recv_from(unsafe { OwnedFd::from_raw_fd(bridge_args.conn_fd) })?;
 
         let mut fds = fds.into_iter();
-        let mut groups: HashMap<ProviderType, (Vec<Library>, Option<Vec<u8>>)> = HashMap::new();
+        let mut groups: HashMap<ProviderType, (Libraries, Option<Vec<u8>>)> = HashMap::new();
 
         for segment in payload.segments {
-            let mut libs = Vec::new();
+            let mut libs = Libraries::default();
 
-            if let Some(names) = segment.names {
-                for (name, fd) in names.into_iter().zip(fds.by_ref()) {
-                    if let Ok(lib) = Library::open(name, fd).inspect_log_error() {
-                        libs.push(lib);
+            if let Some(descriptors) = segment.libraries {
+                for (desc, fd) in descriptors.into_iter().zip(fds.by_ref()) {
+                    match desc.lib_type {
+                        LibraryType::Native => {
+                            if let Ok(lib) = NativeLibrary::open(desc.name, fd).inspect_log_error()
+                            {
+                                libs.native.push(lib);
+                            }
+                        }
+                        LibraryType::Java => {
+                            if let Ok(lib) = JavaLibrary::open(desc.name, fd).inspect_log_error() {
+                                libs.java.push(lib);
+                            }
+                        }
                     }
                 }
             }

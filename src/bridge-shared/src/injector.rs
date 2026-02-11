@@ -1,4 +1,4 @@
-use crate::dlfcn::Library;
+use crate::dlfcn::Libraries;
 use crate::zygote::{ProviderType, SpecializeArgs};
 use anyhow::Result;
 
@@ -7,7 +7,7 @@ pub trait ProviderHandler: Send + Sync + 'static {
 
     fn on_specialize_pre(
         args: &mut SpecializeArgs,
-        libs: Vec<Library>,
+        libs: Libraries,
         data: Option<Vec<u8>>,
     ) -> Result<()>;
 

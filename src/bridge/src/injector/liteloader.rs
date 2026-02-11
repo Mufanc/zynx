@@ -1,5 +1,5 @@
 use anyhow::Result;
-use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 
@@ -10,7 +10,7 @@ impl ProviderHandler for LiteLoaderProviderHandler {
 
     fn on_specialize_pre(
         _args: &mut SpecializeArgs,
-        _libs: Vec<Library>,
+        _libs: Libraries,
         _data: Option<Vec<u8>>,
     ) -> Result<()> {
         Ok(())

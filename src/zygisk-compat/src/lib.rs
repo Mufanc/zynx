@@ -1,7 +1,7 @@
 use crate::module::{PinnedZygiskModule, ZygiskModule};
 use anyhow::Result;
 use std::cell::RefCell;
-use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::dlfcn::Libraries;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 
@@ -19,12 +19,12 @@ impl ProviderHandler for ZygiskProviderHandler {
 
     fn on_specialize_pre(
         args: &mut SpecializeArgs,
-        libs: Vec<Library>,
+        libs: Libraries,
         _data: Option<Vec<u8>>,
     ) -> Result<()> {
         let mut modules = Vec::new();
 
-        for lib in libs {
+        for lib in libs.native {
             let module = ZygiskModule::new(lib)?;
 
             if module.call_entry(args.env) {

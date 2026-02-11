@@ -9,13 +9,13 @@ use log::warn;
 use std::marker::PhantomPinned;
 use std::pin::Pin;
 use std::{mem, ptr};
-use zynx_bridge_shared::dlfcn::Library;
+use zynx_bridge_shared::dlfcn::NativeLibrary;
 use zynx_bridge_shared::zygote::SpecializeArgs;
 
 pub type PinnedZygiskModule = Pin<Box<ZygiskModule>>;
 
 pub struct ZygiskModule {
-    pub library: Library,
+    pub library: NativeLibrary,
     pub entry_fn: extern "C" fn(*const ApiAbi, JNIEnv),
     pub api: ApiAbi,
     pub module: *const ModuleAbi,
@@ -24,7 +24,7 @@ pub struct ZygiskModule {
 }
 
 impl ZygiskModule {
-    pub fn new(library: Library) -> Result<PinnedZygiskModule> {
+    pub fn new(library: NativeLibrary) -> Result<PinnedZygiskModule> {
         let entry_fn: extern "C" fn(*const ApiAbi, JNIEnv) =
             unsafe { mem::transmute(library.dlsym("zygisk_module_entry")?) };
 
