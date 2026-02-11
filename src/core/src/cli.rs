@@ -7,6 +7,9 @@ pub struct Cli {
 
     #[clap(long, help = "disable debugger", group = "configs")]
     pub cfg_disable_debugger: bool,
+
+    #[clap(long, help = "enable zygisk", group = "configs")]
+    pub cfg_enable_zygisk: bool,
 }
 
 impl Cli {

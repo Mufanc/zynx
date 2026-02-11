@@ -1,4 +1,5 @@
 use crate::android::packages::PackageInfoService;
+use crate::config::ZynxConfigs;
 use crate::injector::app::policy::proto::{CheckArgsFast, CheckArgsSlow, PackageInfo};
 use crate::injector::app::policy::{
     EmbryoCheckArgs, EmbryoCheckArgsFast, PolicyDecision, PolicyProvider,
@@ -6,12 +7,11 @@ use crate::injector::app::policy::{
 use anyhow::Result;
 use async_trait::async_trait;
 use std::any::Any;
-
 use zynx_bridge_shared::zygote::ProviderType;
 
-struct ZygiskModule {}
+struct ZygiskAdapter {}
 
-impl ZygiskModule {
+impl ZygiskAdapter {
     async fn check_fast(&self, _args: &CheckArgsFast) -> bool {
         false
     }
@@ -23,7 +23,7 @@ impl ZygiskModule {
 
 #[derive(Default)]
 pub struct ZygiskPolicyProvider {
-    modules: Vec<ZygiskModule>,
+    adapters: Vec<ZygiskAdapter>,
 }
 
 #[async_trait]
@@ -33,15 +33,23 @@ impl PolicyProvider for ZygiskPolicyProvider {
     }
 
     async fn init(&self) -> Result<()> {
+        if !ZynxConfigs::instance().enable_zygisk {
+            return Ok(());
+        }
+
         Ok(())
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+        if !ZynxConfigs::instance().enable_zygisk {
+            return PolicyDecision::Deny;
+        }
+
         let args = build_fast_args(args.assume_fast());
 
         // Todo: complete check logic
 
-        for module in &self.modules {
+        for module in &self.adapters {
             module.check_fast(&args).await;
         }
 
@@ -66,7 +74,7 @@ impl PolicyProvider for ZygiskPolicyProvider {
             app_data_dir: slow.app_data_dir.clone(),
         };
 
-        for module in &self.modules {
+        for module in &self.adapters {
             module.check_slow(&args).await;
         }
 
