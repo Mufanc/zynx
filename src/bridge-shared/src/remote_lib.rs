@@ -1,14 +1,14 @@
 use anyhow::{Context, Error, Result, anyhow, bail};
 use jni::JNIEnv;
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
+use jni::objects::{GlobalRef, JClass, JObject, JValue};
 use jni::strings::JavaStr;
 use log::{info, warn};
-use nix::libc::{RTLD_NOW, c_int, off64_t, size_t, PROT_READ, MAP_PRIVATE, MAP_FAILED};
+use nix::libc;
+use nix::libc::{MAP_FAILED, MAP_PRIVATE, PROT_READ, RTLD_NOW, c_int, off64_t, size_t};
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
-use nix::libc;
 
 mod system {
     use crate::remote_lib::DlextInfo;
@@ -170,7 +170,11 @@ impl JavaLibrary {
         let fd = self.fd.take().context("duplicate called")?;
         let file: File = fd.into();
 
-        info!("loading java library: {}, fd = {}", self.name, file.as_raw_fd());
+        info!(
+            "loading java library: {}, fd = {}",
+            self.name,
+            file.as_raw_fd()
+        );
 
         let file_size = file.metadata()?.len() as usize;
         let mut file_data = vec![0; file_size];
@@ -182,7 +186,7 @@ impl JavaLibrary {
                 PROT_READ,
                 MAP_PRIVATE,
                 file.as_raw_fd(),
-                0
+                0,
             );
 
             if addr == MAP_FAILED {

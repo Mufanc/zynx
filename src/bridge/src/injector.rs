@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use zynx_bridge_shared::injector::ProviderHandler;
 use zynx_bridge_shared::remote_lib::Libraries;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
+#[cfg(feature = "zygisk")]
 use zynx_zygisk_compat::ZygiskProviderHandler;
 
 #[allow(clippy::type_complexity)]
