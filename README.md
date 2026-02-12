@@ -13,7 +13,7 @@ Zynx (**Zy**gote **N**e**x**us) is a dynamic code injection framework for Androi
 
 ### LiteLoader
 
-Place shared libraries in `/data/adb/zynx/liteloader/` with the naming convention `<package_name>-<library_name>.so`. They will be automatically loaded into the target app process.
+Place shared libraries (`.so`) or dex files (`.dex`) in `/data/adb/zynx/liteloader/` with the naming convention `<package_name>-<library_name>.(so|dex)`. They will be automatically loaded into the target app process.
 
 ### Force Debuggable
 
