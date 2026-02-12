@@ -1,14 +1,14 @@
-use anyhow::{Context, Error, Result, anyhow};
+use anyhow::{Context, Error, Result, anyhow, bail};
 use jni::JNIEnv;
 use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
 use jni::strings::JavaStr;
 use log::{info, warn};
-use nix::libc::{RTLD_NOW, c_int, off64_t, size_t};
+use nix::libc::{RTLD_NOW, c_int, off64_t, size_t, PROT_READ, MAP_PRIVATE, MAP_FAILED};
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
+use nix::libc;
 
 mod system {
     use crate::remote_lib::DlextInfo;
@@ -166,20 +166,32 @@ impl JavaLibrary {
     }
 
     pub fn load(&mut self, env: jni::sys::JNIEnv) -> Result<()> {
-        info!("loading java library: {}", self.name);
-
-        // Read dex content from fd
+        // Read dex content from fd using mmap to avoid race conditions
         let fd = self.fd.take().context("duplicate called")?;
-        let mut file: File = fd.into();
+        let file: File = fd.into();
 
-        // Fixme: use mmap instead
-        file.seek(SeekFrom::Start(0))?;
+        info!("loading java library: {}, fd = {}", self.name, file.as_raw_fd());
 
-        let file_size = file.metadata().context("failed to stat file")?.len() as usize;
-        let mut file_data = {
-            let mut buffer = Vec::with_capacity(file_size);
-            file.read_to_end(&mut buffer)?;
-            buffer
+        let file_size = file.metadata()?.len() as usize;
+        let mut file_data = vec![0; file_size];
+
+        unsafe {
+            let addr = libc::mmap(
+                ptr::null_mut(),
+                file_size,
+                PROT_READ,
+                MAP_PRIVATE,
+                file.as_raw_fd(),
+                0
+            );
+
+            if addr == MAP_FAILED {
+                bail!("failed to mmap file")
+            }
+
+            ptr::copy_nonoverlapping(addr as _, file_data.as_mut_ptr(), file_size);
+
+            libc::munmap(addr, file_size);
         };
 
         let mut env = unsafe { JNIEnv::from_raw(env as _) }?;
