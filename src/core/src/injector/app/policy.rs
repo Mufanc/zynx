@@ -6,6 +6,7 @@ mod zygisk;
 use crate::android::packages::PackageInfoListLocked;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
+#[cfg(feature = "zygisk")]
 use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;

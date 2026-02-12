@@ -14,6 +14,11 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
+    strategy:
+      matrix:
+        profile: [debug, release]
+        zygisk: [zygisk, no-zygisk]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -37,4 +42,12 @@ jobs:
         run: cargo install bpf-linker
 
       - name: Build
-        run: just build-release
+        run: just build-${{ matrix.profile }} ${{ matrix.zygisk }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk }}
+          path: |
+            target/aarch64-linux-android/${{ matrix.profile }}/zynx
+            target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
