@@ -9,6 +9,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  ONDK_VERSION: "r29.5"
 
 jobs:
   build:
@@ -32,11 +33,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Setup Rust
-        run: |
-          rustup update stable
-          rustup target add aarch64-linux-android
-          rustup toolchain install nightly --component rust-src
+      - name: Setup Rust (nightly for eBPF)
+        run: rustup toolchain install nightly --component rust-src
+
+      - name: Setup ONDK
+        run: python3 scripts/setup-ondk.py --version $ONDK_VERSION
 
       - name: Install bpf-linker
         run: cargo install bpf-linker
