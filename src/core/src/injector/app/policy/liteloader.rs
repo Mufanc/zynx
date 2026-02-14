@@ -14,17 +14,19 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::task;
+use std::time::Duration;
+use tokio::{task, time};
 use zynx_bridge_shared::zygote::ProviderType;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(.+)-(.+)\.(so|dex)$").unwrap());
 
-type LibrariesArc = Arc<RwLock<HashMap<String, Vec<Arc<InjectLibrary>>>>>;
+type Libraries = HashMap<String, Vec<Arc<InjectLibrary>>>;
+type LibrariesArcLocked = Arc<RwLock<Libraries>>;
 
-fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
-    let mut libs: HashMap<String, Vec<Arc<InjectLibrary>>> = HashMap::new();
+fn reload_libs() -> Result<Libraries> {
+    let mut libs: Libraries = HashMap::new();
 
     for entry in LITE_LIBRARIES_DIR.read_dir()?.flatten() {
         let path = entry.path();
@@ -65,11 +67,11 @@ fn reload_libs() -> Result<HashMap<String, Vec<Arc<InjectLibrary>>>> {
 #[derive(Default)]
 pub struct LiteLoaderPolicyProvider {
     // a package name -> libraries map
-    libs: LibrariesArc,
+    libs: LibrariesArcLocked,
 }
 
 impl LiteLoaderPolicyProvider {
-    fn reload_libs(libs: LibrariesArc) {
+    fn reload_libs(libs: LibrariesArcLocked) {
         match reload_libs() {
             Ok(map) => {
                 let mut libs = libs.write();
@@ -82,10 +84,24 @@ impl LiteLoaderPolicyProvider {
         }
     }
 
-    async fn watch_loop(mut inotify: AsyncInotify, libs: LibrariesArc) -> Result<()> {
-        // Fixme: debounce and just reload changed file
+    async fn watch_loop(mut inotify: AsyncInotify, libs: LibrariesArcLocked) -> Result<()> {
+        // Fixme: just reload changed file
+        const DEBOUNCE: Duration = Duration::from_millis(200);
+
         loop {
             inotify.wait().await?;
+
+            loop {
+                tokio::select! {
+                    result = inotify.wait() => {
+                        result?;
+                    }
+                    _ = time::sleep(DEBOUNCE) => {
+                        break;
+                    }
+                }
+            }
+
             task::block_in_place(|| Self::reload_libs(libs.clone()))
         }
     }
@@ -117,7 +133,10 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
 
         let inotify = AsyncInotify::new(
             &*LITE_LIBRARIES_DIR,
-            EventKindMask::CREATE | EventKindMask::MODIFY_NAME | EventKindMask::ACCESS_CLOSE,
+            EventKindMask::CREATE
+                | EventKindMask::MODIFY_NAME
+                | EventKindMask::ACCESS_CLOSE
+                | EventKindMask::REMOVE,
         )?;
         let libs = self.libs.clone();
 
