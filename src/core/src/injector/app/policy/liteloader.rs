@@ -5,16 +5,18 @@ use crate::injector::app::policy::{
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use notify::EventKindMask;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use regex_lite::Regex;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
+use std::{fmt, path::Path};
 use tokio::{task, time};
 use zynx_bridge_shared::zygote::ProviderType;
 
@@ -22,11 +24,33 @@ static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteload
 static LITE_LIBRARY_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(.+)-(.+)\.(so|dex)$").unwrap());
 
-type Libraries = HashMap<String, Vec<Arc<InjectLibrary>>>;
+type Libraries = HashMap<String, Vec<CachedLibEntry>>;
 type LibrariesArcLocked = Arc<RwLock<Libraries>>;
 
-fn reload_libs() -> Result<Libraries> {
+#[derive(Clone)]
+struct CachedLibEntry {
+    mtime: SystemTime,
+    path: PathBuf,
+    library: Arc<InjectLibrary>,
+}
+
+impl Debug for CachedLibEntry {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("CachedLibEntry")
+            .field("path", &self.path)
+            .field("library", &self.library)
+            .finish_non_exhaustive()
+    }
+}
+
+fn find_cached_entry<'a>(libs: &'a Libraries, path: &Path) -> Option<&'a CachedLibEntry> {
+    libs.values().flatten().find(|entry| entry.path == path)
+}
+
+fn reload_libs(prev_libs: &Libraries) -> Result<Libraries> {
     let mut libs: Libraries = HashMap::new();
+    let mut loaded = 0usize;
+    let mut reused = 0usize;
 
     for entry in LITE_LIBRARIES_DIR.read_dir()?.flatten() {
         let path = entry.path();
@@ -47,19 +71,41 @@ fn reload_libs() -> Result<Libraries> {
             }
         };
 
-        let name = format!("liteloader::{library_name}");
-        let library = match extension {
-            "so" => InjectLibrary::new(path, &name)?,
-            "dex" => InjectLibrary::new_java(path, &name)?,
-            _ => unreachable!(),
+        let current_mtime = match fs::metadata(&path).and_then(|m| m.modified()) {
+            Ok(t) => t,
+            Err(err) => {
+                warn!("failed to get mtime for {}: {err}", path.display());
+                continue;
+            }
         };
 
-        libs.entry(package_name)
-            .or_default()
-            .push(Arc::new(library));
+        let cached_entry = match find_cached_entry(prev_libs, &path) {
+            Some(prev_entry) if prev_entry.mtime == current_mtime => {
+                debug!("reusing cached: {}", path.display());
+                reused += 1;
+                prev_entry.clone()
+            }
+            _ => {
+                info!("loading: {}", path.display());
+                loaded += 1;
+                let name = format!("liteloader::{library_name}");
+                let library = match extension {
+                    "so" => InjectLibrary::new(&path, &name)?,
+                    "dex" => InjectLibrary::new_java(&path, &name)?,
+                    _ => unreachable!(),
+                };
+                CachedLibEntry {
+                    mtime: current_mtime,
+                    path: path.clone(),
+                    library: Arc::new(library),
+                }
+            }
+        };
+
+        libs.entry(package_name).or_default().push(cached_entry);
     }
 
-    info!("found libs: {libs:?}");
+    info!("reload complete: {loaded} loaded, {reused} reused");
 
     Ok(libs)
 }
@@ -72,11 +118,11 @@ pub struct LiteLoaderPolicyProvider {
 
 impl LiteLoaderPolicyProvider {
     fn reload_libs(libs: LibrariesArcLocked) {
-        match reload_libs() {
+        let prev_libs = libs.read().clone();
+
+        match reload_libs(&prev_libs) {
             Ok(map) => {
-                let mut libs = libs.write();
-                *libs = map;
-                info!("reloaded {} libraries", libs.len());
+                *libs.write() = map;
             }
             Err(err) => {
                 warn!("failed to reload library list: {err:?}, keeping old data");
@@ -85,7 +131,6 @@ impl LiteLoaderPolicyProvider {
     }
 
     async fn watch_loop(mut inotify: AsyncInotify, libs: LibrariesArcLocked) -> Result<()> {
-        // Fixme: just reload changed file
         const DEBOUNCE: Duration = Duration::from_millis(200);
 
         loop {
@@ -156,7 +201,9 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
             .and_then(|pkgs| pkgs.iter().find_map(|pkg| libs.get(&pkg.name)));
 
         if let Some(libs) = inject_libs {
-            return PolicyDecision::allow_with_libs(libs.clone());
+            return PolicyDecision::allow_with_libs(
+                libs.iter().map(|lib| lib.library.clone()).collect(),
+            );
         }
 
         PolicyDecision::Deny
