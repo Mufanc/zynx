@@ -18,7 +18,13 @@ message CheckArgsFast {
 }
 
 message CheckArgsSlow {
-   optional CheckArgsFast fast = 1;
+   CheckArgsFast fast = 1;
    optional string nice_name = 2;
    optional string app_data_dir = 3;
+}
+
+enum CheckResult {
+    ALLOW = 0;
+    DENY = 1;
+    MORE_INFO = 2;
 }

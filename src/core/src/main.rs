@@ -16,7 +16,7 @@ use std::env;
 use tokio::runtime::Builder;
 
 fn init_logger() {
-    if env::var("KSU").is_ok() {
+    if env::var("MODDIR").is_ok() {
         android_logger::init_once(
             android_logger::Config::default()
                 .with_max_level(if cfg!(debug_assertions) {
