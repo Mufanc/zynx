@@ -9,11 +9,14 @@ use crate::injector::app::policy::{
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use log::{info, warn};
+use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, UnixAddr};
 use parking_lot::RwLock;
 use prost::Message;
+use regex_lite::Regex;
 use serde::Deserialize;
 use std::any::Any;
 use std::fs;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -23,7 +26,7 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
 use zynx_bridge_shared::zygote::ProviderType;
 
-const MODULES_DIR: &str = "/data/adb/modules";  // Fixme: use MODDIR
+const MODULES_DIR: &str = "/data/adb/modules"; // Fixme: use MODDIR
 const IO_TIMEOUT: Duration = Duration::from_secs(1);
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
 
@@ -47,12 +50,16 @@ enum FilterConfig {
     SocketFile {
         path: PathBuf,
     },
+    UnixAbstract {
+        prefix: String,
+    },
 }
 
 #[derive(Debug, Clone)]
 enum FilterType {
     Stdio(PathBuf, Vec<Box<str>>),
     SocketFile(PathBuf),
+    UnixAbstract(String),
 }
 
 struct ZygiskAdapter {
@@ -63,6 +70,35 @@ struct ZygiskAdapter {
 // ============================================================================
 // Connection abstraction for external filter communication
 // ============================================================================
+
+/// Resolve the latest abstract socket matching `<prefix>_<seq>_<random>`.
+/// Returns the socket name as bytes (without the `@` prefix) for use with `UnixAddr::new_abstract`.
+fn resolve_abstract_socket(prefix: &str) -> Result<Vec<u8>> {
+    let pattern = format!(r"^{}_(\d+)_[a-zA-Z0-9-]+$", regex_lite::escape(prefix));
+    let re = Regex::new(&pattern)?;
+
+    let content = fs::read_to_string("/proc/net/unix")?;
+    let mut best: Option<(u64, &str)> = None;
+
+    for line in content.lines().skip(1) {
+        let path = match line.rsplit_once(char::is_whitespace) {
+            Some((_, path)) if path.starts_with('@') => &path[1..],
+            _ => continue,
+        };
+
+        if let Some(caps) = re.captures(path)
+            && let Ok(seq) = caps[1].parse::<u64>()
+            && best.is_none_or(|(best_seq, _)| seq > best_seq)
+        {
+            best = Some((seq, path));
+        }
+    }
+
+    match best {
+        Some((_, name)) => Ok(name.as_bytes().to_vec()),
+        None => bail!("no abstract socket found with prefix \"{prefix}\""),
+    }
+}
 
 enum AdapterConnection {
     Socket(UnixStream),
@@ -78,6 +114,21 @@ impl AdapterConnection {
         match filter {
             FilterType::SocketFile(path) => {
                 let stream = UnixStream::connect(path).await?;
+                Ok(AdapterConnection::Socket(stream))
+            }
+            FilterType::UnixAbstract(prefix) => {
+                let name = resolve_abstract_socket(prefix)?;
+                let fd = socket::socket(
+                    AddressFamily::Unix,
+                    SockType::Stream,
+                    SockFlag::SOCK_CLOEXEC,
+                    None,
+                )?;
+                let addr = UnixAddr::new_abstract(&name)?;
+                socket::connect(fd.as_raw_fd(), &addr)?;
+                let std_stream = std::os::unix::net::UnixStream::from(fd);
+                std_stream.set_nonblocking(true)?;
+                let stream = UnixStream::from_std(std_stream)?;
                 Ok(AdapterConnection::Socket(stream))
             }
             FilterType::Stdio(path, args) => {
@@ -240,6 +291,7 @@ fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
                 FilterType::Stdio(path, args.into_iter().map(|s| s.into()).collect())
             }
             FilterConfig::SocketFile { path } => FilterType::SocketFile(path),
+            FilterConfig::UnixAbstract { prefix } => FilterType::UnixAbstract(prefix),
         };
 
         info!("loaded module: {module_id}");

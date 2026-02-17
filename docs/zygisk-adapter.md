@@ -18,7 +18,7 @@ When the zynx daemon starts, it scans all modules under `/data/adb/modules`, rea
 
 ## Configuration Format
 
-The configuration file is `zynx-configs.toml` and must contain a `[filter]` section. The `type` field determines the filter type. `stdio` and `socket_file` are mutually exclusive.
+The configuration file is `zynx-configs.toml` and must contain a `[filter]` section. The `type` field determines the filter type. `stdio`, `socket_file`, and `unix_abstract` are mutually exclusive.
 
 ### Stdio
 
@@ -51,6 +51,28 @@ path = "/data/adb/modules/<module_id>/run/filter.sock"
 |-------|------|----------|-------------|
 | `type` | string | yes | Must be `"socket_file"` |
 | `path` | string | yes | Absolute path to the Unix socket file |
+
+### Unix Abstract
+
+Zynx connects to a Linux abstract namespace Unix socket. The configuration only specifies a prefix; zynx discovers matching sockets at connect time by scanning `/proc/net/unix`.
+
+```toml
+[filter]
+type = "unix_abstract"
+prefix = "myapp_filter"
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | Must be `"unix_abstract"` |
+| `prefix` | string | yes | Socket name prefix for discovery |
+
+**Socket naming convention**: The filter server must listen on an abstract socket named `<prefix>_<seq>_<random>`, where:
+
+- `<seq>` is a `u64` sequence number, not necessarily contiguous. Common choices include a Unix timestamp or `SystemClock.uptimeMillis()`.
+- `<random>` is an arbitrary string matching `[a-zA-Z0-9-]+`.
+
+Zynx always connects to the socket with the **highest** `<seq>` value (the newest). If that socket cannot be reached, the connection is considered failed (no fallback to older sockets).
 
 ## Protocol
 
