@@ -1,20 +1,35 @@
 use crate::android::packages::PackageInfoService;
 use crate::config::ZynxConfigs;
-use crate::injector::app::policy::proto::{CheckArgsFast, CheckArgsSlow, CheckResult, PackageInfo};
+use crate::injector::app::policy::proto::{
+    CheckArgsFast, CheckArgsSlow, CheckResponse, CheckResult, PackageInfo,
+};
 use crate::injector::app::policy::{
     EmbryoCheckArgs, EmbryoCheckArgsFast, PolicyDecision, PolicyProvider,
 };
-use anyhow::Result;
+use anyhow::{Result, bail};
 use async_trait::async_trait;
 use log::{info, warn};
 use parking_lot::RwLock;
+use prost::Message;
 use serde::Deserialize;
 use std::any::Any;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
+use tokio::process::{Child, ChildStdin, ChildStdout, Command};
+use tokio::time::timeout;
 use zynx_bridge_shared::zygote::ProviderType;
 
-const MODULES_DIR: &str = "/data/adb/modules";
+const MODULES_DIR: &str = "/data/adb/modules";  // Fixme: use MODDIR
+const IO_TIMEOUT: Duration = Duration::from_secs(1);
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
+
+// ============================================================================
+// Configuration parsing (from zynx-configs.toml)
+// ============================================================================
 
 #[derive(Debug, Deserialize)]
 struct ZygiskModuleConfig {
@@ -34,6 +49,7 @@ enum FilterConfig {
     },
 }
 
+#[derive(Debug, Clone)]
 enum FilterType {
     Stdio(PathBuf, Vec<Box<str>>),
     SocketFile(PathBuf),
@@ -44,26 +60,131 @@ struct ZygiskAdapter {
     filter: FilterType,
 }
 
-impl ZygiskAdapter {
-    fn check_fast(&self, _args: &CheckArgsFast) -> bool {
-        false
+// ============================================================================
+// Connection abstraction for external filter communication
+// ============================================================================
+
+enum AdapterConnection {
+    Socket(UnixStream),
+    Stdio {
+        child: Child,
+        stdin: ChildStdin,
+        stdout: ChildStdout,
+    },
+}
+
+impl AdapterConnection {
+    async fn connect(filter: &FilterType) -> Result<Self> {
+        match filter {
+            FilterType::SocketFile(path) => {
+                let stream = UnixStream::connect(path).await?;
+                Ok(AdapterConnection::Socket(stream))
+            }
+            FilterType::Stdio(path, args) => {
+                let mut child = Command::new(path)
+                    .args(args.iter().map(|s| s.as_ref()))
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+
+                let stdin = child.stdin.take().expect("stdin was configured as piped");
+                let stdout = child.stdout.take().expect("stdout was configured as piped");
+
+                Ok(AdapterConnection::Stdio {
+                    child,
+                    stdin,
+                    stdout,
+                })
+            }
+        }
     }
 
-    fn check_slow(&self, args: &CheckArgsSlow) -> bool {
-        match &self.filter {
-            FilterType::Stdio(path, _expected_args) => {
-                if let Some(nice_name) = &args.nice_name {
-                    path.to_str().is_some_and(|p| nice_name.contains(p))
-                } else {
-                    false
-                }
+    async fn send_message(&mut self, msg: &impl Message) -> Result<()> {
+        let data = msg.encode_to_vec();
+        let len = data.len() as u32;
+
+        match self {
+            AdapterConnection::Socket(stream) => {
+                stream.write_all(&len.to_le_bytes()).await?;
+                stream.write_all(&data).await?;
             }
-            FilterType::SocketFile(socket_path) => {
-                socket_path.exists()
+            AdapterConnection::Stdio { stdin, .. } => {
+                stdin.write_all(&len.to_le_bytes()).await?;
+                stdin.write_all(&data).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn recv_data(&mut self, buffer: &mut [u8]) -> Result<()> {
+        match self {
+            AdapterConnection::Socket(stream) => {
+                stream.read_exact(buffer).await?;
+            }
+            AdapterConnection::Stdio { stdout, .. } => {
+                stdout.read_exact(buffer).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn recv_message<T: Message + Default>(&mut self) -> Result<T> {
+        let mut len_buf = [0u8; 4];
+
+        self.recv_data(&mut len_buf).await?;
+
+        let len = u32::from_le_bytes(len_buf) as usize;
+        if len > MAX_MESSAGE_SIZE {
+            bail!("message too large: {len} bytes (max {MAX_MESSAGE_SIZE})");
+        }
+
+        let mut data = vec![0u8; len];
+
+        self.recv_data(&mut data).await?;
+
+        Ok(T::decode(data.as_slice())?)
+    }
+
+    async fn close(self) {
+        match self {
+            AdapterConnection::Socket(stream) => {
+                drop(stream);
+            }
+            AdapterConnection::Stdio { mut child, .. } => {
+                let _ = child.kill().await;
             }
         }
     }
 }
+
+// ============================================================================
+// Check state management
+// ============================================================================
+
+/// Result of a single adapter's check in the fast phase
+enum AdapterCheckResult {
+    /// Already decided in fast phase (ALLOW or DENY)
+    Decided(CheckResult),
+    /// Needs recheck, connection kept alive
+    Pending(Box<AdapterConnection>),
+    /// Failed to connect or communicate
+    Failed,
+}
+
+/// State passed between check() and recheck()
+struct ZygiskCheckState {
+    /// Results for each adapter (indexed by adapter position)
+    results: Vec<AdapterCheckResult>,
+    /// Module IDs for logging in recheck
+    module_ids: Vec<String>,
+}
+
+// ============================================================================
+// Module scanning
+// ============================================================================
 
 fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
     let modules_dir = Path::new(MODULES_DIR);
@@ -129,9 +250,121 @@ fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
     Ok(adapters)
 }
 
+// ============================================================================
+// Policy Provider implementation
+// ============================================================================
+
 #[derive(Default)]
 pub struct ZygiskPolicyProvider {
     adapters: RwLock<Vec<ZygiskAdapter>>,
+}
+
+impl ZygiskPolicyProvider {
+    /// Check a single adapter in the fast phase
+    async fn check_adapter(
+        filter: &FilterType,
+        module_id: &str,
+        fast_args: &CheckArgsFast,
+    ) -> AdapterCheckResult {
+        // Connect to the external filter
+        let mut conn = match timeout(IO_TIMEOUT, AdapterConnection::connect(filter)).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(err)) => {
+                warn!("{module_id}: failed to connect: {err}");
+                return AdapterCheckResult::Failed;
+            }
+            Err(_) => {
+                warn!("{module_id}: connection timeout");
+                return AdapterCheckResult::Failed;
+            }
+        };
+
+        // Send CheckArgsFast
+        if let Err(err) = timeout(IO_TIMEOUT, conn.send_message(fast_args)).await {
+            warn!("{module_id}: failed to send fast args: {err}");
+            conn.close().await;
+            return AdapterCheckResult::Failed;
+        }
+
+        // Receive CheckResponse
+        let response: CheckResponse = match timeout(IO_TIMEOUT, conn.recv_message()).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                warn!("{module_id}: failed to receive response: {err}");
+                conn.close().await;
+                return AdapterCheckResult::Failed;
+            }
+            Err(_) => {
+                warn!("{module_id}: receive timeout");
+                conn.close().await;
+                return AdapterCheckResult::Failed;
+            }
+        };
+
+        match CheckResult::try_from(response.result) {
+            Ok(CheckResult::Allow) => {
+                conn.close().await;
+                AdapterCheckResult::Decided(CheckResult::Allow)
+            }
+            Ok(CheckResult::Deny) => {
+                conn.close().await;
+                AdapterCheckResult::Decided(CheckResult::Deny)
+            }
+            Ok(CheckResult::MoreInfo) => {
+                // Keep connection alive for recheck
+                AdapterCheckResult::Pending(Box::new(conn))
+            }
+            Err(_) => {
+                warn!("{module_id}: invalid check result: {}", response.result);
+                conn.close().await;
+                AdapterCheckResult::Failed
+            }
+        }
+    }
+
+    /// Recheck a single adapter in the slow phase
+    async fn recheck_adapter(
+        mut conn: AdapterConnection,
+        module_id: &str,
+        slow_args: &CheckArgsSlow,
+    ) -> CheckResult {
+        // Send CheckArgsSlow
+        if let Err(err) = timeout(IO_TIMEOUT, conn.send_message(slow_args)).await {
+            warn!("{module_id}: failed to send slow args: {err}");
+            conn.close().await;
+            return CheckResult::Deny;
+        }
+
+        // Receive CheckResponse
+        let response: CheckResponse = match timeout(IO_TIMEOUT, conn.recv_message()).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                warn!("{module_id}: failed to receive response: {err}");
+                conn.close().await;
+                return CheckResult::Deny;
+            }
+            Err(_) => {
+                warn!("{module_id}: receive timeout");
+                conn.close().await;
+                return CheckResult::Deny;
+            }
+        };
+
+        conn.close().await;
+
+        match CheckResult::try_from(response.result) {
+            Ok(CheckResult::Allow) => CheckResult::Allow,
+            Ok(CheckResult::Deny) => CheckResult::Deny,
+            Ok(CheckResult::MoreInfo) => {
+                warn!("{module_id}: returned MORE_INFO in slow phase, treating as DENY");
+                CheckResult::Deny
+            }
+            Err(_) => {
+                warn!("{module_id}: invalid check result: {}", response.result);
+                CheckResult::Deny
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -156,13 +389,52 @@ impl PolicyProvider for ZygiskPolicyProvider {
             return PolicyDecision::Deny;
         }
 
-        let args = build_fast_args(args.assume_fast());
+        // Clone adapter data and release lock before any await
+        let adapter_data: Vec<_> = {
+            let adapters = self.adapters.read();
+            if adapters.is_empty() {
+                return PolicyDecision::Deny;
+            }
+            adapters
+                .iter()
+                .map(|a| (a.filter.clone(), a.module_id.clone()))
+                .collect()
+        };
 
-        for module in self.adapters.read().iter() {
-            module.check_fast(&args);
+        let fast_args = build_fast_args(args.assume_fast());
+
+        // Check all adapters
+        let mut results = Vec::with_capacity(adapter_data.len());
+        let mut has_pending = false;
+        let mut has_allow = false;
+
+        for (filter, module_id) in &adapter_data {
+            let result = Self::check_adapter(filter, module_id, &fast_args).await;
+
+            match &result {
+                AdapterCheckResult::Decided(CheckResult::Allow) => has_allow = true,
+                AdapterCheckResult::Pending(_) => has_pending = true,
+                _ => {}
+            }
+
+            results.push(result);
         }
 
-        PolicyDecision::MoreInfo(Some(Box::new(args)))
+        // Determine decision
+        if has_pending {
+            // Need recheck for some adapters, store module_ids for recheck
+            let module_ids: Vec<_> = adapter_data.into_iter().map(|(_, id)| id).collect();
+            PolicyDecision::MoreInfo(Some(Box::new(ZygiskCheckState {
+                results,
+                module_ids,
+            })))
+        } else if has_allow {
+            // All decided, at least one allowed
+            PolicyDecision::allow()
+        } else {
+            // All decided, none allowed
+            PolicyDecision::Deny
+        }
     }
 
     async fn recheck(
@@ -172,22 +444,46 @@ impl PolicyProvider for ZygiskPolicyProvider {
     ) -> PolicyDecision {
         let slow = args.assume_slow();
 
-        let fast_args = state
-            .downcast::<CheckArgsFast>()
-            .map(|b| *b)
-            .expect("failed to downcast cached state");
+        let mut check_state = state
+            .downcast::<ZygiskCheckState>()
+            .expect("failed to downcast ZygiskCheckState");
 
-        let args = CheckArgsSlow {
-            fast: Some(fast_args),
+        // Build slow args
+        let slow_args = CheckArgsSlow {
+            fast: None, // We don't need to resend fast args
             nice_name: slow.nice_name.clone(),
             app_data_dir: slow.app_data_dir.clone(),
         };
 
-        for module in self.adapters.read().iter() {
-            module.check_slow(&args);
+        let mut has_allow = false;
+
+        // Process all results (module_ids are stored in state, no lock needed)
+        for (i, result) in check_state.results.drain(..).enumerate() {
+            match result {
+                AdapterCheckResult::Decided(CheckResult::Allow) => {
+                    has_allow = true;
+                }
+                AdapterCheckResult::Pending(conn) => {
+                    let module_id = &check_state.module_ids[i];
+                    let final_result = Self::recheck_adapter(*conn, module_id, &slow_args).await;
+                    if final_result == CheckResult::Allow {
+                        has_allow = true;
+                    }
+                }
+                AdapterCheckResult::Decided(CheckResult::Deny) | AdapterCheckResult::Failed => {
+                    // Already denied or failed
+                }
+                AdapterCheckResult::Decided(CheckResult::MoreInfo) => {
+                    // Should not happen, but treat as deny
+                }
+            }
         }
 
-        PolicyDecision::Deny
+        if has_allow {
+            PolicyDecision::allow()
+        } else {
+            PolicyDecision::Deny
+        }
     }
 }
 

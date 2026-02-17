@@ -28,3 +28,7 @@ enum CheckResult {
     DENY = 1;
     MORE_INFO = 2;
 }
+
+message CheckResponse {
+    CheckResult result = 1;
+}
