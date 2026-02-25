@@ -21,16 +21,15 @@ env_logger = { workspace = true }
 futures = { workspace = true }
 jni = { workspace = true }
 log = { workspace = true }
-lzma-rs = { workspace = true }
 memfd = { workspace = true }
 nix = { workspace = true, features = ["feature", "fs", "process", "ptrace", "resource", "signal", "socket", "uio", "user"] }
 notify = { workspace = true }
-object = { workspace = true }
 once_cell = { workspace = true }
 once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
 prost = { workspace = true }
+r3solvr = { workspace = true }
 regex-lite = { workspace = true }
 scopeguard = { workspace = true }
 serde = { workspace = true }

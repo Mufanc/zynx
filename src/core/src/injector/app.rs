@@ -1,10 +1,11 @@
 use crate::binary::cpp::ArgCounter;
-use crate::binary::symbol::{Section, Symbol, SymbolResolver};
 use anyhow::{Context, Result};
 use log::info;
 use once_cell::sync::Lazy;
+use r3solvr::{BasicResolver, Query, Section, Symbol, SymbolResolver};
 use strum::IntoEnumIterator;
 use zynx_bridge_shared::zygote::SpecializeVersion;
+use zynx_misc::ext::ResultExt;
 
 mod embryo;
 pub mod policy;
@@ -24,13 +25,22 @@ pub struct SpecializeCommonConfig {
 
 impl SpecializeCommonConfig {
     fn resolve() -> Result<Self> {
-        let resolver = SymbolResolver::from_file(SC_LIBRARY_PATH)?;
+        let resolver = BasicResolver::from_file(SC_LIBRARY_PATH)?;
 
         let (sym, ver) = SpecializeVersion::iter()
-            .find_map(|ver| resolver.find_symbol(ver.as_ref()).map(|sym| (sym, ver)))
+            .find_map(|ver| {
+                resolver
+                    .lookup_symbol(
+                        Query::new(ver.as_ref())
+                            .with_prefix(true)
+                            .with_debugdata(true),
+                    )
+                    .map(|sym| (sym, ver))
+                    .ok_or_warn()
+            })
             .context("no known SpecializeCommon symbol found in libandroid_runtime.so")?;
 
-        let sec = resolver.find_section(sym.section_index)?;
+        let sec = resolver.lookup_section(sym.section_index)?;
         let args_count = ArgCounter::count_args_for_symbol(&sym.name)?;
 
         Ok(Self {
