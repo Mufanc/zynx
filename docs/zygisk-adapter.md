@@ -47,10 +47,10 @@ type = "socket_file"
 path = "/data/adb/modules/<module_id>/run/filter.sock"
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Must be `"socket_file"` |
-| `path` | string | yes | Absolute path to the Unix socket file |
+| Field  | Type   | Required | Description                           |
+|--------|--------|----------|---------------------------------------|
+| `type` | string | yes      | Must be `"socket_file"`               |
+| `path` | string | yes      | Absolute path to the Unix socket file |
 
 ### Unix Abstract
 
@@ -62,10 +62,10 @@ type = "unix_abstract"
 prefix = "myapp_filter"
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `type` | string | yes | Must be `"unix_abstract"` |
-| `prefix` | string | yes | Socket name prefix for discovery |
+| Field    | Type   | Required | Description                      |
+|----------|--------|----------|----------------------------------|
+| `type`   | string | yes      | Must be `"unix_abstract"`        |
+| `prefix` | string | yes      | Socket name prefix for discovery |
 
 **Socket naming convention**: The filter server must listen on an abstract socket named `<prefix>_<seq>_<random>`, where:
 
@@ -167,15 +167,15 @@ The entire interaction completes within **a single connection / process lifetime
 
 ## CheckArgsFast vs CheckArgsSlow
 
-| Field | Fast | Slow | Description |
-|-------|------|------|-------------|
-| `uid` | yes | yes | Application UID |
-| `gid` | yes | yes | Application GID |
-| `is_system_server` | yes | yes | Whether this is system_server |
-| `is_child_zygote` | yes | yes | Whether this is a child zygote |
-| `package_info` | yes | yes | Package information list |
-| `nice_name` | no | yes | Process name (e.g. `com.example.app`) |
-| `app_data_dir` | no | yes | App data directory (e.g. `/data/data/com.example.app`) |
+| Field              | Fast | Slow | Description                                            |
+|--------------------|------|------|--------------------------------------------------------|
+| `uid`              | yes  | yes  | Application UID                                        |
+| `gid`              | yes  | yes  | Application GID                                        |
+| `is_system_server` | yes  | yes  | Whether this is system_server                          |
+| `is_child_zygote`  | yes  | yes  | Whether this is a child zygote                         |
+| `package_info`     | yes  | yes  | Package information list                               |
+| `nice_name`        | no   | yes  | Process name (e.g. `com.example.app`)                  |
+| `app_data_dir`     | no   | yes  | App data directory (e.g. `/data/data/com.example.app`) |
 
 Fast args are available immediately at zygote fork time with no extra cost. Slow args require reading from the app process JVM, which is more expensive. If the filter can make a decision based on UID / package info alone, it should return `ALLOW` or `DENY` in the fast phase to avoid triggering the slow phase.
 
