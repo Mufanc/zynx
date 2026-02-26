@@ -16,7 +16,7 @@ impl PolicyProvider for DebuggerPolicyProvider {
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
-        if ZynxConfigs::instance().disable_debugger {
+        if !ZynxConfigs::instance().enable_debugger {
             return PolicyDecision::Deny;
         }
 

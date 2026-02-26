@@ -1,6 +1,7 @@
 use aya_build::{Package, Toolchain};
 use std::env;
 use std::error::Error;
+use std::process::Command;
 
 fn main() -> Result<(), Box<dyn Error>> {
     if env::var("PROFILE")? == "debug" {
@@ -24,6 +25,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         .collect();
 
     prost_build::compile_protos(&proto_files, &[proto_src])?;
+
+    let output = Command::new("git").args(["rev-parse", "HEAD"]).output()?;
+    let commit_hash = String::from_utf8(output.stdout)?.trim().to_string();
+
+    println!("cargo:rustc-env=GIT_COMMIT_HASH={commit_hash}");
+    println!("cargo:rerun-if-changed={}/.git/HEAD", env!("ROOT_DIR"));
 
     Ok(())
 }

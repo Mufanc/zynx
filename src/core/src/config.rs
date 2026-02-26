@@ -6,7 +6,7 @@ static INSTANCE: OnceLock<ZynxConfigs> = OnceLock::new();
 
 #[derive(Debug)]
 pub struct ZynxConfigs {
-    pub disable_debugger: bool,
+    pub enable_debugger: bool,
     pub enable_zygisk: bool,
 }
 
@@ -27,7 +27,7 @@ impl ZynxConfigs {
 
     fn from_cli(cli: &Cli) -> Self {
         Self {
-            disable_debugger: cli.cfg_disable_debugger,
+            enable_debugger: cli.cfg_enable_debugger,
             enable_zygisk: cli.cfg_enable_zygisk,
         }
     }

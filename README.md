@@ -17,11 +17,19 @@ Place shared libraries (`.so`) or dex files (`.dex`) in `/data/adb/zynx/liteload
 
 ### Force Debuggable
 
+> Requires `--cfg-enable-debugger` to be enabled.
+
 Set the system property `debug.zynx.debuggable.<package_name>` to `1` to force-enable debugging for the specified app:
 
 ```shell
 setprop debug.zynx.debuggable.com.example.app 1
 ```
+
+### Zygisk (WIP)
+
+> Requires `--cfg-enable-zygisk` to be enabled.
+
+Enables Zygisk compatibility layer, allowing Zynx to load Zygisk modules.
 
 ## License
 
