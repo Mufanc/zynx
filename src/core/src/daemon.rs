@@ -40,7 +40,13 @@ async fn launch_daemon_async() -> Result<()> {
     });
 
     let start = Instant::now();
+    let args: Vec<String> = env::args()
+        .skip(1)
+        .filter(|arg| arg != "--daemon")
+        .collect();
+
     let _ = Command::new(env::current_exe()?)
+        .args(&args)
         .env(ENV_LAUNCHER_PID, format!("{}", process::id()))
         .spawn()?;
 

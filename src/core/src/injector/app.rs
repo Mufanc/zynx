@@ -30,13 +30,9 @@ impl SpecializeCommonConfig {
         let (sym, ver) = SpecializeVersion::iter()
             .find_map(|ver| {
                 resolver
-                    .lookup_symbol(
-                        Query::new(ver.as_ref())
-                            .with_prefix(true)
-                            .with_debugdata(true),
-                    )
+                    .lookup_symbol(Query::new(ver.as_ref()).with_debugdata(true))
                     .map(|sym| (sym, ver))
-                    .ok_or_warn()
+                    .ok()
             })
             .context("no known SpecializeCommon symbol found in libandroid_runtime.so")?;
 

@@ -5,19 +5,14 @@ use clap::Parser;
 pub struct Cli {
     #[clap(
         long,
-        help = "Run Zynx in daemon mode (usually used for KernelSU/Magisk module)",
-        conflicts_with = "configs"
+        help = "Run Zynx in daemon mode (usually used for KernelSU/Magisk module)"
     )]
     pub daemon: bool,
 
-    #[clap(
-        long,
-        help = "Enable debugger (allow force-debuggable for apps)",
-        group = "configs"
-    )]
+    #[clap(long, help = "Enable debugger (allow force-debuggable for apps)")]
     pub cfg_enable_debugger: bool,
 
-    #[clap(long, help = "Enable zygisk compat", group = "configs")]
+    #[clap(long, help = "Enable zygisk compat")]
     pub cfg_enable_zygisk: bool,
 }
 
