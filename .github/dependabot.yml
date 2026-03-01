@@ -12,7 +12,13 @@ updates:
       aya:
         patterns:
           - "aya*"
-      production-dependencies:
+      prost:
+        patterns:
+          - "prost*"
+      strum:
+        patterns:
+          - "strum*"
+      routine-updates:
         patterns:
           - "*"
         update-types:
