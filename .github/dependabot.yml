@@ -9,7 +9,10 @@ updates:
     labels:
       - "dependabot"
     groups:
-      minor-and-patch:
+      aya:
+        patterns:
+          - "aya*"
+      production-dependencies:
         patterns:
           - "*"
         update-types:
