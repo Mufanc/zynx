@@ -46,7 +46,7 @@ jobs:
         run: just build-${{ matrix.profile }} ${{ matrix.zygisk }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: zynx-${{ matrix.profile }}-${{ matrix.zygisk }}
           path: |
