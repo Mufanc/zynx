@@ -5,7 +5,6 @@ use once_cell::sync::Lazy;
 use r3solvr::{BasicResolver, Query, Section, Symbol, SymbolResolver};
 use strum::IntoEnumIterator;
 use zynx_bridge_shared::zygote::SpecializeVersion;
-use zynx_misc::ext::ResultExt;
 
 mod embryo;
 pub mod policy;

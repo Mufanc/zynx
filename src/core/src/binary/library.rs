@@ -5,11 +5,11 @@ use r3solvr::{CachedResolver, Symbol, SymbolResolver};
 
 static SYSTEM_LIBRARY_RESOLVER: Lazy<SystemLibraryResolver> = Lazy::new(SystemLibraryResolver::new);
 
-pub struct SystemLibraryResolver<'a> {
-    resolvers: OnceMap<String, CachedResolver<'a>>,
+pub struct SystemLibraryResolver {
+    resolvers: OnceMap<String, CachedResolver>,
 }
 
-impl SystemLibraryResolver<'_> {
+impl SystemLibraryResolver {
     fn new() -> Self {
         Self {
             resolvers: OnceMap::new(),

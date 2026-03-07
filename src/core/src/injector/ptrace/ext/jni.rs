@@ -12,7 +12,7 @@ use zynx_misc::ext::ResultExt;
 #[macro_export]
 macro_rules! jni_fn {
     ($func: ident) => {
-        std::mem::offset_of!(jni::sys::JNINativeInterface_, $func)
+        std::mem::offset_of!(jni::sys::JNINativeInterface__1_6, $func)
     };
 }
 
