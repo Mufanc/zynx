@@ -1,7 +1,7 @@
 use anyhow::{Context, Error, Result, anyhow, bail};
 use jni::objects::{JClass, JObject, JString, JValue};
 use jni::refs::Global;
-use jni::{Env, EnvOutcome, EnvUnowned, Outcome, jni_sig, jni_str};
+use jni::{EnvOutcome, EnvUnowned, Outcome, jni_sig, jni_str};
 use log::{info, warn};
 use nix::libc;
 use nix::libc::{MAP_FAILED, MAP_PRIVATE, PROT_READ, RTLD_NOW, c_int, off64_t, size_t};
@@ -81,7 +81,7 @@ impl NativeLibrary {
         let fd = self
             .fd
             .take()
-            .ok_or_else(|| anyhow!("already opened or fd consumed"))?;
+            .context("already opened or fd consumed")?;
 
         info!("dlopen library: {}, fd = {}", self.name, fd.as_raw_fd());
 
@@ -109,7 +109,7 @@ impl NativeLibrary {
     }
 
     pub fn dlsym(&self, symbol: &str) -> Result<*const c_void> {
-        let handle = self.handle.ok_or_else(|| anyhow!("library not opened"))?;
+        let handle = self.handle.context("library not opened")?;
 
         let symbol = CString::new(symbol)?;
 
@@ -236,7 +236,7 @@ impl JavaLibrary {
 
             // Invoke Main.main(String[]) with empty args
             let empty_args =
-                env.new_object_array(0, jni_str!("java/lang/String"), &JObject::null())?;
+                env.new_object_array(0, jni_str!("java/lang/String"), JObject::null())?;
 
             env.call_static_method(
                 main_class,
