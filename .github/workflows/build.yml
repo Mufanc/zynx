@@ -31,7 +31,7 @@ jobs:
         uses: arduino/setup-protoc@v3
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Setup Rust (nightly for eBPF)
         run: rustup toolchain install nightly --component rust-src
