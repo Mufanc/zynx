@@ -1,7 +1,7 @@
+use crate::misc::create_sealed_memfd;
 use anyhow::Result;
-use memfd::{FileSeal, Memfd, MemfdOptions};
+use memfd::Memfd;
 use once_cell::sync::Lazy;
-use std::io::{Seek, SeekFrom, Write};
 use std::os::fd::{AsFd, BorrowedFd};
 
 static DATA: &[u8] = include_bytes!(concat!(
@@ -20,23 +20,7 @@ pub struct Bridge {
 
 impl Bridge {
     fn new(data: &[u8]) -> Result<Self> {
-        let fd = MemfdOptions::default()
-            .allow_sealing(true)
-            .create("zynx::bridge")?;
-
-        let mut file = fd.as_file();
-
-        file.write_all(data)?;
-        file.sync_data()?;
-        file.seek(SeekFrom::Start(0))?;
-
-        fd.add_seals(&[
-            FileSeal::SealGrow,
-            FileSeal::SealShrink,
-            FileSeal::SealWrite,
-            FileSeal::SealSeal,
-        ])?;
-
+        let fd = create_sealed_memfd("zynx::bridge", data)?;
         Ok(Self { fd })
     }
 

@@ -7,7 +7,7 @@ use nix::libc;
 use nix::libc::{MAP_FAILED, MAP_PRIVATE, PROT_READ, RTLD_NOW, c_int, off64_t, size_t};
 use std::ffi::{CStr, CString, c_void};
 use std::fs::File;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::ptr;
 
 mod system {
@@ -78,10 +78,7 @@ impl NativeLibrary {
     }
 
     pub fn open(&mut self) -> Result<()> {
-        let fd = self
-            .fd
-            .take()
-            .context("already opened or fd consumed")?;
+        let fd = self.fd.take().context("already opened or fd consumed")?;
 
         info!("dlopen library: {}, fd = {}", self.name, fd.as_raw_fd());
 
@@ -225,6 +222,7 @@ impl JavaLibrary {
             env.delete_local_ref(buffer);
 
             // Load entry class via ClassLoader.loadClass (env.find_class uses system classloader)
+            // Todo: Make entry class configurable
             let class_name = env.new_string("xyz.mufanc.zynx.Main")?;
             let main_class = env.call_method(
                 &class_loader,
@@ -272,10 +270,4 @@ impl JavaLibrary {
 
         Ok(())
     }
-}
-
-#[derive(Default)]
-pub struct Libraries {
-    pub native: Vec<NativeLibrary>,
-    pub java: Vec<JavaLibrary>,
 }

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use zynx_bridge_shared::injector::ProviderHandler;
+use zynx_bridge_api::injector::ProviderHandler;
+use zynx_bridge_api::zygote::ProviderBundle;
 use zynx_bridge_shared::policy::debugger::DebuggerParams;
-use zynx_bridge_shared::remote_lib::Libraries;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 
 pub struct DebuggerProviderHandler;
@@ -9,12 +9,8 @@ pub struct DebuggerProviderHandler;
 impl ProviderHandler for DebuggerProviderHandler {
     const TYPE: ProviderType = ProviderType::Debugger;
 
-    fn on_specialize_pre(
-        args: &mut SpecializeArgs,
-        _libs: &mut Libraries,
-        data: &mut Option<Vec<u8>>,
-    ) -> Result<()> {
-        if let Some(bytes) = data {
+    fn on_specialize_pre(args: &mut SpecializeArgs, bundle: &mut ProviderBundle) -> Result<()> {
+        if let Some(bytes) = &bundle.data {
             let params: DebuggerParams = wincode::deserialize(bytes)?;
 
             if params.force_debuggable {

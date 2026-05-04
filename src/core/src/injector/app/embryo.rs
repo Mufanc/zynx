@@ -1,7 +1,7 @@
 use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::{EmbryoCheckArgs, InjectPayload, PolicyProviderManager};
+use crate::injector::app::policy::{EmbryoCheckArgs, PolicyProviderManager, ProviderBundle};
 use crate::injector::app::zygote::ZygoteMaps;
-use crate::injector::app::{SC_BRK, SC_CONFIG};
+use crate::injector::app::{SC_BRK, SC_CONFIG, ipc};
 use crate::injector::bridge::Bridge;
 use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
@@ -155,7 +155,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<InjectPayload>> {
+    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<ProviderBundle>>> {
         // Todo: selinux check execmem?
 
         let uid = Uid::from_raw(args.uid as _);
@@ -198,7 +198,7 @@ impl EmbryoInjector {
         &self,
         mut regs: RegSet,
         raw_args: &[c_long],
-        payload: InjectPayload,
+        bundles: Vec<ProviderBundle>,
     ) -> Result<()> {
         info!("injecting process: {self}, raw_args = {raw_args:?}");
 
@@ -228,9 +228,9 @@ impl EmbryoInjector {
 
         let bridge_fd = bridge_fd.forget();
 
-        // If there are segments to inject, keep the socket open for sending
+        // If there are bundles to inject, keep the socket open for sending
         // payload later; otherwise close it immediately
-        let (conn_fd_local, conn_fd_remote) = if !payload.is_empty() {
+        let (conn_fd_local, conn_fd_remote) = if !bundles.is_empty() {
             let (local, remote) = conn.forget();
             (Some(local), Some(remote))
         } else {
@@ -414,7 +414,7 @@ impl EmbryoInjector {
 
         // Send payload over the socket so the bridge can load libraries
         if let Some(conn_fd) = conn_fd_local {
-            payload.send_to(conn_fd)?;
+            ipc::transfer_data(conn_fd, bundles)?;
         }
 
         Ok(())

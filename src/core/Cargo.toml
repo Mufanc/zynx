@@ -5,7 +5,7 @@ edition.workspace = true
 
 [features]
 default = ["zygisk"]
-zygisk = ["zynx-bridge/zygisk", "zynx-bridge-shared/zygisk"]
+zygisk = ["zynx-bridge/zygisk"]
 
 [dependencies]
 android_logger = { workspace = true }

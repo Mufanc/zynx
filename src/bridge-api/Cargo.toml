@@ -1,0 +1,11 @@
+[package]
+name = "zynx-bridge-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+zynx-bridge-shared = { path = "../bridge-shared" }
+
+[lints]
+workspace = true

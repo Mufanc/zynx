@@ -4,7 +4,7 @@ use crate::injector::app::policy::proto::{
     CheckArgsFast, CheckArgsSlow, CheckResponse, CheckResult, PackageInfo,
 };
 use crate::injector::app::policy::{
-    EmbryoCheckArgs, EmbryoCheckArgsFast, PolicyDecision, PolicyProvider,
+    Attachment, EmbryoCheckArgs, EmbryoCheckArgsFast, PolicyDecision, PolicyProvider,
 };
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -24,6 +24,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::time::timeout;
+use zynx_bridge_shared::policy::zygisk::ZygiskParams;
 use zynx_bridge_shared::zygote::ProviderType;
 
 const MODULES_DIR: &str = "/data/adb/modules"; // Fixme: use MODDIR
@@ -482,7 +483,17 @@ impl PolicyProvider for ZygiskPolicyProvider {
             })))
         } else if has_allow {
             // All decided, at least one allowed
-            PolicyDecision::allow()
+            let attachments: Vec<Attachment> = adapter_data
+                .iter()
+                .map(|(_, module_id)| {
+                    let params = ZygiskParams {
+                        module_name: module_id.clone(),
+                    };
+                    let data = wincode::serialize(&params).unwrap_or_default();
+                    Attachment::with_data(data)
+                })
+                .collect();
+            PolicyDecision::allow_with_attachments(attachments)
         } else {
             // All decided, none allowed
             PolicyDecision::Deny

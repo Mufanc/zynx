@@ -1,8 +1,7 @@
 use crate::android::inotify::AsyncInotify;
 use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::{
-    EmbryoCheckArgs, InjectLibrary, PolicyDecision, PolicyProvider,
-};
+use crate::injector::app::policy::{Attachment, EmbryoCheckArgs, PolicyDecision, PolicyProvider};
+use crate::misc::create_sealed_memfd;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use log::{debug, error, info, warn};
@@ -11,39 +10,45 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use regex_lite::Regex;
 use std::collections::HashMap;
+use std::env;
 use std::fmt::Debug;
 use std::fs;
+use std::os::fd::OwnedFd;
+use std::os::fd::{FromRawFd, IntoRawFd};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fmt, path::Path};
 use tokio::{task, time};
+use zynx_bridge_shared::policy::liteloader::{LibraryKind, LiteLoaderParams};
 use zynx_bridge_shared::zygote::ProviderType;
+use zynx_misc::selinux::FileExt;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(.+)-(.+)\.(so|dex)$").unwrap());
 
-type Libraries = HashMap<String, Vec<CachedLibEntry>>;
+type Libraries = HashMap<String, Vec<CachedLibraryEntry>>;
 type LibrariesArcLocked = Arc<RwLock<Libraries>>;
 
 #[derive(Clone)]
-struct CachedLibEntry {
+struct CachedLibraryEntry {
     mtime: SystemTime,
     path: PathBuf,
-    library: Arc<InjectLibrary>,
+    fd: Arc<OwnedFd>,
+    kind: LibraryKind,
 }
 
-impl Debug for CachedLibEntry {
+impl Debug for CachedLibraryEntry {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("CachedLibEntry")
             .field("path", &self.path)
-            .field("library", &self.library)
+            .field("kind", &self.kind)
             .finish_non_exhaustive()
     }
 }
 
-fn find_cached_entry<'a>(libs: &'a Libraries, path: &Path) -> Option<&'a CachedLibEntry> {
+fn find_cached_entry<'a>(libs: &'a Libraries, path: &Path) -> Option<&'a CachedLibraryEntry> {
     libs.values().flatten().find(|entry| entry.path == path)
 }
 
@@ -88,16 +93,25 @@ fn reload_libs(prev_libs: &Libraries) -> Result<Libraries> {
             _ => {
                 info!("loading: {}", path.display());
                 loaded += 1;
+
                 let name = format!("liteloader::{library_name}");
-                let library = match extension {
-                    "so" => InjectLibrary::new(&path, &name)?,
-                    "dex" => InjectLibrary::new_java(&path, &name)?,
+                let fd = create_sealed_memfd(&name, &fs::read(&path)?)?;
+
+                if env::var("MODDIR").is_ok() {
+                    fd.as_file().mark_as_magisk_file();
+                }
+
+                let kind = match extension {
+                    "so" => LibraryKind::Native,
+                    "dex" => LibraryKind::Java,
                     _ => unreachable!(),
                 };
-                CachedLibEntry {
+
+                CachedLibraryEntry {
                     mtime: current_mtime,
                     path: path.clone(),
-                    library: Arc::new(library),
+                    fd: Arc::new(unsafe { std::os::fd::OwnedFd::from_raw_fd(fd.into_raw_fd()) }),
+                    kind,
                 }
             }
         };
@@ -112,7 +126,6 @@ fn reload_libs(prev_libs: &Libraries) -> Result<Libraries> {
 
 #[derive(Default)]
 pub struct LiteLoaderPolicyProvider {
-    // a package name -> libraries map
     libs: LibrariesArcLocked,
 }
 
@@ -201,9 +214,24 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
             .and_then(|pkgs| pkgs.iter().find_map(|pkg| libs.get(&pkg.name)));
 
         if let Some(libs) = inject_libs {
-            return PolicyDecision::allow_with_libs(
-                libs.iter().map(|lib| lib.library.clone()).collect(),
-            );
+            let attachments: Vec<Attachment> = libs
+                .iter()
+                .map(|entry| {
+                    let params = LiteLoaderParams {
+                        lib_name: entry
+                            .path
+                            .file_stem()
+                            .and_then(|stem| stem.to_str())
+                            .unwrap_or("unknown")
+                            .to_string(),
+                        kind: entry.kind.clone(),
+                    };
+                    let data = wincode::serialize(&params).unwrap_or_default();
+
+                    Attachment::with_both(entry.fd.clone(), data)
+                })
+                .collect();
+            return PolicyDecision::allow_with_attachments(attachments);
         }
 
         PolicyDecision::Deny

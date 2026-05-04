@@ -31,7 +31,7 @@ run-emulator: build-debug
     adb shell "chmod +x /data/local/tmp/zynx"
     adb shell "(su 0 killall zynx || true) && sleep 1"
     adb shell su 0 setenforce 0
-    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx --cfg-enable-zygisk"
+    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx --cfg-enable-zygisk --cfg-enable-debugger"
 
 setup-ondk:
     @python3 scripts/setup-ondk.py --version {{ONDK_VERSION}}

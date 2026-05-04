@@ -8,7 +8,9 @@ anyhow = { workspace = true }
 jni = { workspace = true }
 log = { workspace = true }
 nix = { workspace = true }
-zynx-bridge-shared = { path = "../bridge-shared", features = ["zygisk"] }
+wincode = { workspace = true }
+zynx-bridge-api = { path = "../bridge-api" }
+zynx-bridge-shared = { path = "../bridge-shared" }
 zynx-misc = { path = "../misc" }
 
 [lints]

@@ -8,25 +8,19 @@ use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 #[cfg(feature = "zygisk")]
 use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use async_trait::async_trait;
 use futures::future;
 use log::warn;
-use memfd::{FileSeal, Memfd, MemfdOptions};
 use nix::unistd::{Gid, Uid};
 use std::any::Any;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display, Formatter};
-use std::io::{Seek, SeekFrom, Write};
+use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
-use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd, RawFd};
-use std::path::Path;
+use std::os::fd::OwnedFd;
 use std::sync::{Arc, OnceLock};
-use std::{env, fmt, fs, mem};
-use zynx_bridge_shared::zygote::{
-    IpcPayload, IpcSegment, LibraryDescriptor, LibraryType, ProviderType,
-};
-use zynx_misc::selinux::FileExt;
+use std::{fmt, mem};
+use zynx_bridge_shared::zygote::ProviderType;
 
 static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
@@ -130,83 +124,46 @@ impl<'a> Deref for EmbryoCheckArgs<'a> {
     }
 }
 
-#[derive(Debug)]
-pub struct InjectLibrary {
-    name: String,
-    fd: Memfd,
-    lib_type: LibraryType,
+#[derive(Debug, Clone)]
+pub struct Attachment {
+    pub fd: Option<Arc<OwnedFd>>,
+    pub data: Option<Vec<u8>>,
 }
 
-impl InjectLibrary {
-    fn new_internal<P: AsRef<Path>, N: Display>(
-        path: P,
-        name: &N,
-        lib_type: LibraryType,
-    ) -> Result<Self> {
-        let path = path.as_ref();
-        let name = format!("zynx-inject::{}-{}", name, lib_type.as_str());
-
-        let fd = MemfdOptions::default().allow_sealing(true).create(&name)?;
-
-        let mut file = fd.as_file();
-
-        file.write_all(&fs::read(path)?)?;
-        file.sync_data()?;
-        file.seek(SeekFrom::Start(0))?;
-
-        if env::var("MODDIR").is_ok() {
-            file.mark_as_magisk_file();
+impl Attachment {
+    pub fn with_fd(fd: Arc<OwnedFd>) -> Self {
+        Self {
+            fd: Some(fd),
+            data: None,
         }
-
-        fd.add_seals(&[
-            FileSeal::SealGrow,
-            FileSeal::SealShrink,
-            FileSeal::SealWrite,
-            FileSeal::SealSeal,
-        ])?;
-
-        Ok(Self { name, fd, lib_type })
     }
 
-    pub fn new<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
-        Self::new_internal(path, name, LibraryType::Native)
+    pub fn with_data(data: Vec<u8>) -> Self {
+        Self {
+            fd: None,
+            data: Some(data),
+        }
     }
 
-    pub fn new_java<P: AsRef<Path>, N: Display>(path: P, name: &N) -> Result<Self> {
-        Self::new_internal(path, name, LibraryType::Java)
-    }
-
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let path = path.as_ref();
-
-        Self::new(path, &path.display())
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-
-    pub fn lib_type(&self) -> LibraryType {
-        self.lib_type
+    pub fn with_both(fd: Arc<OwnedFd>, data: Vec<u8>) -> Self {
+        Self {
+            fd: Some(fd),
+            data: Some(data),
+        }
     }
 }
 
-impl AsRawFd for InjectLibrary {
-    fn as_raw_fd(&self) -> RawFd {
-        self.fd.as_raw_fd()
-    }
-}
-
-impl AsFd for InjectLibrary {
-    fn as_fd(&self) -> BorrowedFd<'_> {
-        self.fd.as_file().as_fd()
-    }
+#[derive(Debug, Clone)]
+pub struct ProviderBundle {
+    pub ty: ProviderType,
+    pub attachments: Vec<Attachment>,
+    pub data: Option<Vec<u8>>,
 }
 
 pub enum PolicyDecision {
     Allow {
-        libs: Vec<Arc<InjectLibrary>>,
         data: Option<Vec<u8>>,
+        attachments: Option<Vec<Attachment>>,
     },
     MoreInfo(Option<Box<dyn Any + Send + Sync>>),
     Deny,
@@ -215,19 +172,22 @@ pub enum PolicyDecision {
 impl PolicyDecision {
     pub fn allow() -> Self {
         PolicyDecision::Allow {
-            libs: vec![],
             data: None,
+            attachments: None,
         }
     }
 
-    pub fn allow_with_libs(libs: Vec<Arc<InjectLibrary>>) -> Self {
-        PolicyDecision::Allow { libs, data: None }
+    pub fn allow_with_attachments(attachments: Vec<Attachment>) -> Self {
+        PolicyDecision::Allow {
+            data: None,
+            attachments: Some(attachments),
+        }
     }
 
     pub fn allow_with_data(data: Vec<u8>) -> Self {
         PolicyDecision::Allow {
-            libs: vec![],
             data: Some(data),
+            attachments: None,
         }
     }
 }
@@ -235,9 +195,9 @@ impl PolicyDecision {
 impl Debug for PolicyDecision {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            PolicyDecision::Allow { libs, data } => fmt
+            PolicyDecision::Allow { data, attachments } => fmt
                 .debug_struct("Allow")
-                .field("libs", libs)
+                .field("attachments", &attachments.as_ref().map(|a| a.len()))
                 .field("data", &data.as_ref().map(|d| d.len()))
                 .finish(),
             PolicyDecision::MoreInfo(_) => fmt.write_str("MoreInfo(...)"),
@@ -268,22 +228,6 @@ pub trait PolicyProvider: Send + Sync {
         _state: Box<dyn Any + Send + Sync>,
     ) -> PolicyDecision {
         self.check(args).await
-    }
-}
-
-pub struct InjectPayload {
-    libs: Vec<Arc<InjectLibrary>>,
-    payload: IpcPayload,
-}
-
-impl InjectPayload {
-    pub fn is_empty(&self) -> bool {
-        self.payload.segments.is_empty()
-    }
-
-    pub fn send_to(self, conn_fd: OwnedFd) -> Result<()> {
-        self.payload
-            .send_to(conn_fd, self.libs.iter().map(|lib| lib.as_fd()))
     }
 }
 
@@ -385,80 +329,31 @@ impl PolicyProviderManager {
     }
 
     /// Aggregate decisions from all policy providers.
-    /// Returns None if all denied, Some(payload) if injection allowed.
-    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<InjectPayload> {
-        struct GroupedEntry {
-            libs: Vec<Arc<InjectLibrary>>,
-            data: Option<Vec<u8>>,
-            visited: HashSet<String>,
-        }
+    /// Returns None if all denied, Some(bundles) if injection allowed.
+    pub fn aggregate(&self, decisions: &[PolicyDecision]) -> Option<Vec<ProviderBundle>> {
+        let mut providers: HashMap<ProviderType, ProviderBundle> = HashMap::new();
 
-        let mut groups: HashMap<ProviderType, GroupedEntry> = HashMap::new();
-
-        // Phase 1: Group libraries and data by ProviderType.
-        // decisions[i] corresponds to self.providers[i] (order preserved by join_all).
         for (i, decision) in decisions.iter().enumerate() {
-            if let PolicyDecision::Allow {
-                libs: decision_libs,
-                data,
-            } = decision
-            {
-                let provider_type = self.providers[i].provider_type();
-                let entry = groups.entry(provider_type).or_insert_with(|| GroupedEntry {
-                    libs: Vec::new(),
+            if let PolicyDecision::Allow { data, attachments } = decision {
+                let ty = self.providers[i].provider_type();
+                let entry = providers.entry(ty).or_insert_with(|| ProviderBundle {
+                    ty,
+                    attachments: Vec::new(),
                     data: None,
-                    visited: HashSet::new(),
                 });
-
-                // Deduplicate libraries by name within each provider group
-                for lib in decision_libs {
-                    if entry.visited.insert(lib.name().to_string()) {
-                        entry.libs.push(lib.clone());
-                    }
+                if let Some(attachments) = attachments {
+                    entry.attachments.extend(attachments.iter().cloned());
                 }
-
-                if let Some(bytes) = data {
-                    entry.data = Some(bytes.clone());
+                if let Some(data) = data {
+                    entry.data = Some(data.clone());
                 }
             }
         }
 
-        // Phase 2: Build IpcSegments and the flat libs list.
-        // The order of `all_libs` must align with segments: each segment's
-        // `fds_count` tells the receiver how many consecutive fds belong to it.
-        let mut all_libs = Vec::new();
-        let mut segments = Vec::new();
-
-        for (provider_type, entry) in groups {
-            let libraries: Vec<LibraryDescriptor> = entry
-                .libs
-                .iter()
-                .map(|lib| LibraryDescriptor {
-                    name: lib.name().into(),
-                    lib_type: lib.lib_type(),
-                })
-                .collect();
-
-            segments.push(IpcSegment {
-                provider_type,
-                libraries: if libraries.is_empty() {
-                    None
-                } else {
-                    Some(libraries)
-                },
-                data: entry.data,
-            });
-            all_libs.extend(entry.libs);
-        }
-
-        if segments.is_empty() {
+        if providers.is_empty() {
             None
         } else {
-            let payload = IpcPayload { segments };
-            Some(InjectPayload {
-                libs: all_libs,
-                payload,
-            })
+            Some(providers.into_values().collect())
         }
     }
 }

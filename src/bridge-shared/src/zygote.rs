@@ -149,41 +149,25 @@ impl SpecializeArgs {
 pub enum ProviderType {
     Debugger,
     LiteLoader,
-    #[cfg(feature = "zygisk")]
     Zygisk,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
-pub enum LibraryType {
-    Native,
-    Java,
-}
-
-impl LibraryType {
-    pub fn as_str(&self) -> &str {
-        match self {
-            LibraryType::Native => "native",
-            LibraryType::Java => "java",
-        }
-    }
-}
-
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
-pub struct LibraryDescriptor {
-    pub name: String,
-    pub lib_type: LibraryType,
+pub struct AttachmentWire {
+    pub has_fd: bool,
+    pub data: Option<Vec<u8>>,
+}
+
+#[derive(Debug, SchemaRead, SchemaWrite)]
+pub struct ProviderBundleWire {
+    pub ty: ProviderType,
+    pub attachments: Vec<AttachmentWire>,
+    pub data: Option<Vec<u8>>,
 }
 
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct IpcPayload {
-    pub segments: Vec<IpcSegment>,
-}
-
-#[derive(Debug, SchemaRead, SchemaWrite)]
-pub struct IpcSegment {
-    pub provider_type: ProviderType,
-    pub libraries: Option<Vec<LibraryDescriptor>>,
-    pub data: Option<Vec<u8>>,
+    pub providers: Vec<ProviderBundleWire>,
 }
 
 impl IpcPayload {
@@ -192,14 +176,14 @@ impl IpcPayload {
         conn_fd: OwnedFd,
         fds: impl IntoIterator<Item = BorrowedFd<'a>>,
     ) -> Result<()> {
-        let libraries = self
-            .segments
+        let providers = self
+            .providers
             .iter()
             .by_ref()
-            .map(|seg| &seg.libraries)
+            .map(|seg| &seg.attachments)
             .collect::<Vec<_>>();
 
-        debug!("sending libraries: {libraries:?}");
+        debug!("sending providers: {providers:?}");
 
         const SCM_MAX_FD: usize = 253;
 

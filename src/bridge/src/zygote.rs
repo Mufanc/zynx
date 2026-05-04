@@ -7,16 +7,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use zynx_bridge_shared::remote_lib::{JavaLibrary, Libraries, NativeLibrary};
-use zynx_bridge_shared::zygote::{
-    BridgeArgs, IpcPayload, LibraryType, ProviderType, SpecializeArgs,
-};
+use zynx_bridge_api::zygote::{Attachment, ProviderBundle};
+use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
 use zynx_misc::ext::ResultExt;
 
 struct SpecializeContext {
     args: SpecializeArgs,
     handler: ProviderHandlerRegistry,
-    groups: HashMap<ProviderType, (Libraries, Option<Vec<u8>>)>,
+    groups: HashMap<ProviderType, ProviderBundle>,
 }
 
 thread_local! {
@@ -35,25 +33,23 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
             IpcPayload::recv_from(unsafe { OwnedFd::from_raw_fd(bridge_args.conn_fd) })?;
 
         let mut fds = fds.into_iter();
-        let mut groups: HashMap<ProviderType, (Libraries, Option<Vec<u8>>)> = HashMap::new();
+        let mut groups: HashMap<ProviderType, ProviderBundle> = HashMap::new();
 
-        for segment in payload.segments {
-            let mut libs = Libraries::default();
+        for wire in payload.providers {
+            let bundle = ProviderBundle {
+                ty: wire.ty,
+                attachments: wire
+                    .attachments
+                    .into_iter()
+                    .map(|aw| Attachment {
+                        fd: if aw.has_fd { fds.next() } else { None },
+                        data: aw.data,
+                    })
+                    .collect(),
+                data: wire.data,
+            };
 
-            if let Some(descriptors) = segment.libraries {
-                for (desc, fd) in descriptors.into_iter().zip(fds.by_ref()) {
-                    match desc.lib_type {
-                        LibraryType::Native => {
-                            libs.native.push(NativeLibrary::new(desc.name, fd));
-                        }
-                        LibraryType::Java => {
-                            libs.java.push(JavaLibrary::new(desc.name, fd));
-                        }
-                    }
-                }
-            }
-
-            groups.insert(segment.provider_type, (libs, segment.data));
+            groups.insert(bundle.ty, bundle);
         }
 
         let handler = ProviderHandlerRegistry::new();

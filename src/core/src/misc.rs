@@ -1,5 +1,26 @@
+use anyhow::Result;
+use memfd::{FileSeal, Memfd, MemfdOptions};
 use nix::libc;
+use std::io::{Seek, SeekFrom, Write};
 use std::{panic, slice};
+
+pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<Memfd> {
+    let fd = MemfdOptions::default().allow_sealing(true).create(name)?;
+
+    let mut file = fd.as_file();
+    file.write_all(data)?;
+    file.sync_data()?;
+    file.seek(SeekFrom::Start(0))?;
+
+    fd.add_seals(&[
+        FileSeal::SealGrow,
+        FileSeal::SealShrink,
+        FileSeal::SealWrite,
+        FileSeal::SealSeal,
+    ])?;
+
+    Ok(fd)
+}
 
 pub fn inject_panic_handler() {
     let original = panic::take_hook();

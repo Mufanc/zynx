@@ -87,16 +87,6 @@ impl RegSet {
     pub fn return_value(&self) -> c_long {
         self.0.regs[0] as _
     }
-
-    pub fn callee_saves(&self) -> [usize; 10] {
-        let mut regs = [0; 10];
-
-        self.0.regs[19..29].iter().enumerate().for_each(|(i, reg)| {
-            regs[i] = *reg as _;
-        });
-
-        regs
-    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

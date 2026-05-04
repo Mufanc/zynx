@@ -6,18 +6,16 @@ use crate::injector::liteloader::LiteLoaderProviderHandler;
 use anyhow::Result;
 use log::error;
 use std::collections::HashMap;
-use zynx_bridge_shared::injector::ProviderHandler;
-use zynx_bridge_shared::remote_lib::Libraries;
+use zynx_bridge_api::injector::ProviderHandler;
+use zynx_bridge_api::zygote::ProviderBundle;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 #[cfg(feature = "zygisk")]
 use zynx_zygisk_compat::ZygiskProviderHandler;
 
 #[allow(clippy::type_complexity)]
 struct Handler {
-    on_specialize_pre:
-        Box<dyn Fn(&mut SpecializeArgs, &mut Libraries, &mut Option<Vec<u8>>) -> Result<()>>,
-    on_specialize_post:
-        Box<dyn Fn(&SpecializeArgs, &mut Libraries, &mut Option<Vec<u8>>) -> Result<()>>,
+    on_specialize_pre: Box<dyn Fn(&mut SpecializeArgs, &mut ProviderBundle) -> Result<()>>,
+    on_specialize_post: Box<dyn Fn(&SpecializeArgs, &mut ProviderBundle) -> Result<()>>,
 }
 
 #[derive(Default)]
@@ -51,11 +49,11 @@ impl ProviderHandlerRegistry {
     pub fn dispatch_pre(
         &self,
         args: &mut SpecializeArgs,
-        groups: &mut HashMap<ProviderType, (Libraries, Option<Vec<u8>>)>,
+        groups: &mut HashMap<ProviderType, ProviderBundle>,
     ) {
         for (provider_type, handler) in &self.handlers {
-            if let Some((libs, data)) = groups.get_mut(provider_type)
-                && let Err(err) = (handler.on_specialize_pre)(args, libs, data)
+            if let Some(bundle) = groups.get_mut(provider_type)
+                && let Err(err) = (handler.on_specialize_pre)(args, bundle)
             {
                 error!("failed to dispatch pre hook for provider type {provider_type:?}: {err:?}");
             }
@@ -65,11 +63,11 @@ impl ProviderHandlerRegistry {
     pub fn dispatch_post(
         &self,
         args: &SpecializeArgs,
-        groups: &mut HashMap<ProviderType, (Libraries, Option<Vec<u8>>)>,
+        groups: &mut HashMap<ProviderType, ProviderBundle>,
     ) {
         for (provider_type, handler) in &self.handlers {
-            if let Some((libs, data)) = groups.get_mut(provider_type)
-                && let Err(err) = (handler.on_specialize_post)(args, libs, data)
+            if let Some(bundle) = groups.get_mut(provider_type)
+                && let Err(err) = (handler.on_specialize_post)(args, bundle)
             {
                 error!("failed to dispatch post hook for provider type {provider_type:?}: {err:?}");
             }

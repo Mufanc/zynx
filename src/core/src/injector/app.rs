@@ -7,6 +7,7 @@ use strum::IntoEnumIterator;
 use zynx_bridge_shared::zygote::SpecializeVersion;
 
 mod embryo;
+pub mod ipc;
 pub mod policy;
 pub mod zygote;
 

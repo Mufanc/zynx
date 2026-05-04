@@ -1,8 +1,10 @@
 use crate::module::{PinnedZygiskModule, ZygiskModule};
 use anyhow::Result;
 use std::cell::RefCell;
-use zynx_bridge_shared::injector::ProviderHandler;
-use zynx_bridge_shared::remote_lib::Libraries;
+use zynx_bridge_api::injector::ProviderHandler;
+use zynx_bridge_api::zygote::ProviderBundle;
+use zynx_bridge_shared::policy::zygisk::ZygiskParams;
+use zynx_bridge_shared::remote_lib::NativeLibrary;
 use zynx_bridge_shared::zygote::{ProviderType, SpecializeArgs};
 use zynx_misc::ext::ResultExt;
 
@@ -18,24 +20,36 @@ thread_local! {
 impl ProviderHandler for ZygiskProviderHandler {
     const TYPE: ProviderType = ProviderType::Zygisk;
 
-    fn on_specialize_pre(
-        args: &mut SpecializeArgs,
-        libs: &mut Libraries,
-        _data: &mut Option<Vec<u8>>,
-    ) -> Result<()> {
+    fn on_specialize_pre(args: &mut SpecializeArgs, bundle: &mut ProviderBundle) -> Result<()> {
         let mut modules = Vec::new();
 
-        for mut lib in libs.native.drain(..) {
-            let Ok(()) = lib.open().inspect_log_error() else {
-                continue;
-            };
+        for attachment in bundle.attachments.iter_mut() {
+            if let Some(fd) = attachment.fd.take() {
+                let params: ZygiskParams = match attachment
+                    .data
+                    .as_ref()
+                    .and_then(|data| wincode::deserialize(data).ok())
+                {
+                    Some(params) => params,
+                    None => {
+                        log::warn!("failed to deserialize ZygiskParams");
+                        continue;
+                    }
+                };
 
-            let Ok(module) = ZygiskModule::new(lib).inspect_log_error() else {
-                continue;
-            };
+                let mut lib = NativeLibrary::new(params.module_name, fd);
 
-            if module.call_entry(args.env) {
-                modules.push(module);
+                let Ok(()) = lib.open().inspect_log_error() else {
+                    continue;
+                };
+
+                let Ok(module) = ZygiskModule::new(lib).inspect_log_error() else {
+                    continue;
+                };
+
+                if module.call_entry(args.env) {
+                    modules.push(module);
+                }
             }
         }
 
@@ -50,11 +64,7 @@ impl ProviderHandler for ZygiskProviderHandler {
         Ok(())
     }
 
-    fn on_specialize_post(
-        args: &SpecializeArgs,
-        _libs: &mut Libraries,
-        _data: &mut Option<Vec<u8>>,
-    ) -> Result<()> {
+    fn on_specialize_post(args: &SpecializeArgs, _bundle: &mut ProviderBundle) -> Result<()> {
         G_MODULES.with(|cell| {
             let modules = cell.take();
             modules

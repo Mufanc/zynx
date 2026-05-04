@@ -3,9 +3,6 @@ name = "zynx-bridge-shared"
 version.workspace = true
 edition.workspace = true
 
-[features]
-zygisk = []
-
 [dependencies]
 anyhow = { workspace = true }
 bytemuck = { workspace = true }
