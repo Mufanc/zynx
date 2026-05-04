@@ -171,7 +171,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "libc",
  "log",
- "object",
+ "object 0.38.1",
  "once_cell",
  "thiserror",
 ]
@@ -284,7 +284,7 @@ dependencies = [
  "bytes",
  "hashbrown 0.16.1",
  "log",
- "object",
+ "object 0.38.1",
  "thiserror",
 ]
 
@@ -1213,6 +1213,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1449,10 +1458,10 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "r3solvr"
 version = "0.1.0"
-source = "git+https://github.com/Mufanc/r3solvr#46463a6eeef4add9bd014a59bf86924f0b2a9555"
+source = "git+https://github.com/Mufanc/r3solvr#5969d7678d12daa9ea7c5848e89bf99a50151356"
 dependencies = [
  "lzma-rs",
- "object",
+ "object 0.39.1",
  "once_map",
  "thiserror",
 ]
