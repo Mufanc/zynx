@@ -8,6 +8,7 @@ static INSTANCE: OnceLock<ZynxConfigs> = OnceLock::new();
 pub struct ZynxConfigs {
     pub enable_debugger: bool,
     pub enable_zygisk: bool,
+    pub enable_liteloader: bool,
 }
 
 impl ZynxConfigs {
@@ -29,6 +30,7 @@ impl ZynxConfigs {
         Self {
             enable_debugger: cli.cfg_enable_debugger,
             enable_zygisk: cli.cfg_enable_zygisk,
+            enable_liteloader: cli.cfg_enable_liteloader,
         }
     }
 }

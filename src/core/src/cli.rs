@@ -14,6 +14,9 @@ pub struct Cli {
 
     #[clap(long, help = "Enable zygisk compat")]
     pub cfg_enable_zygisk: bool,
+
+    #[clap(long, help = "Enable liteloader")]
+    pub cfg_enable_liteloader: bool,
 }
 
 impl Cli {
