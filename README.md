@@ -9,6 +9,10 @@ Zynx (**Zy**gote **N**e**x**us) is a dynamic code injection framework for Androi
 - **Stealthy** — traceless operation with no mounts; non-target processes are left completely untouched
 - **Policy framework** — determines per-app injection decisions with async two-phase checks
 
+## Daemon Mode
+
+`zynx daemon` starts the daemon in the background and exits once initialization is complete. This makes it suitable for use in scripts like `post-fs-data.sh`.
+
 ## Usage
 
 ### LiteLoader
