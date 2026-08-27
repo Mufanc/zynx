@@ -15,8 +15,9 @@ use procfs::process::{ProcState, Process};
 use std::ffi::c_void;
 use std::fmt::{Display, Formatter};
 use std::fs::OpenOptions;
-use std::io::{IoSlice, IoSliceMut, Seek, SeekFrom, Write};
+use std::io::{IoSlice, IoSliceMut};
 use std::mem::MaybeUninit;
+use std::os::unix::fs::FileExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{fmt, thread};
@@ -170,13 +171,11 @@ impl RemoteProcess {
     }
 
     pub fn poke_data_ignore_perm(&self, addr: usize, data: &[u8]) -> Result<()> {
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .write(true)
             .open(format!("/proc/{}/mem", self.pid))?;
 
-        file.seek(SeekFrom::Start(addr as _))?;
-        file.write_all(data)?;
-        file.flush()?;
+        file.write_all_at(data, addr as _)?;
 
         Ok(())
     }
