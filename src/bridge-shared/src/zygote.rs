@@ -22,6 +22,15 @@ pub enum SpecializeVersion {
     V = 35,
 }
 
+impl SpecializeVersion {
+    pub const fn args_count(self) -> usize {
+        match self {
+            Self::R => 20,
+            Self::V => 22,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SpecializeArgs {
     pub version: SpecializeVersion,

@@ -1,4 +1,3 @@
-use crate::binary::cpp::ArgCounter;
 use anyhow::{Context, Result};
 use log::info;
 use once_cell::sync::Lazy;
@@ -20,7 +19,7 @@ pub struct SpecializeCommonConfig {
     pub ver: SpecializeVersion,
     pub sym: Symbol,
     pub sec: Section,
-    pub args_cnt: usize,
+    pub args_count: usize,
 }
 
 impl SpecializeCommonConfig {
@@ -37,14 +36,13 @@ impl SpecializeCommonConfig {
             .context("no known SpecializeCommon symbol found in libandroid_runtime.so")?;
 
         let sec = resolver.lookup_section(sym.section_index)?;
-        let args_count = ArgCounter::count_args_for_symbol(&sym.name)?;
 
         Ok(Self {
             lib: SC_LIBRARY_PATH,
             ver,
             sym,
             sec,
-            args_cnt: args_count,
+            args_count: ver.args_count(),
         })
     }
 }

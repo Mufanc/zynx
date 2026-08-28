@@ -1,2 +1,3 @@
-pub mod cpp;
+#[cfg(test)]
+mod cpp;
 pub mod library;

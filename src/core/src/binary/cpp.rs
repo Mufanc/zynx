@@ -1,30 +1,19 @@
 use anyhow::Result;
 use cpp_demangle::{DemangleOptions, DemangleWrite, Symbol};
-use log::debug;
 use std::fmt;
+use zynx_bridge_shared::zygote::SpecializeVersion;
 
 #[derive(Default)]
-pub struct ArgCounter(usize);
+struct ArgCounter(usize);
 
 impl ArgCounter {
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn count(&self) -> usize {
-        self.0 + 1
-    }
-
-    pub fn count_args_for_symbol(symbol_name: &str) -> Result<usize> {
+    fn count_args_for_symbol(symbol_name: &str) -> Result<usize> {
         let sym = Symbol::new(symbol_name)?;
         let options = DemangleOptions::default();
-
-        debug!("demangle symbol: {} -> {}", symbol_name, sym.demangle()?);
-
-        let mut counter = Self::new();
+        let mut counter = Self::default();
         sym.structured_demangle(&mut counter, &options)?;
 
-        Ok(counter.count())
+        Ok(counter.0 + 1)
     }
 }
 
@@ -40,4 +29,16 @@ impl DemangleWrite for ArgCounter {
 
         Ok(())
     }
+}
+
+#[test]
+fn specialize_argument_counts_match_symbols() -> Result<()> {
+    for version in [SpecializeVersion::R, SpecializeVersion::V] {
+        assert_eq!(
+            ArgCounter::count_args_for_symbol(version.as_ref())?,
+            version.args_count()
+        );
+    }
+
+    Ok(())
 }

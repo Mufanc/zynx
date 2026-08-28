@@ -14,7 +14,6 @@ async-trait = { workspace = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
 clap = { workspace = true }
-cpp_demangle = { workspace = true }
 daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
@@ -61,6 +60,9 @@ prost-build = { workspace = true }
 # workflows with stable cargo; stable cargo outright refuses to load manifests that use unstable
 # features.
 zynx-ebpf = { path = "../ebpf" }
+
+[dev-dependencies]
+cpp_demangle = { workspace = true }
 
 [lints]
 workspace = true

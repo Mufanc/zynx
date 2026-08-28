@@ -100,7 +100,7 @@ impl EmbryoInjector {
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
                     // Capture registers and read the specialize function arguments
                     let regs = self.get_regs()?;
-                    let mut raw_args = vec![0; SC_CONFIG.args_cnt];
+                    let mut raw_args = vec![0; SC_CONFIG.args_count];
 
                     self.get_args(&mut raw_args)?;
                     // Restore the original code at the breakpoint site
@@ -296,11 +296,11 @@ impl EmbryoInjector {
             ; ldp fp, lr, [sp], #16
 
             // Step 5: Call the pre-hook
-            //   pre_hook(args_on_stack, args_cnt, &bridge_args)
+            //   pre_hook(args_on_stack, args_count, &bridge_args)
             ; stp fp, lr, [sp, #-16]!
             ; mov ip, x0
             ; add x0, sp, 16
-            ; mov x1, SC_CONFIG.args_cnt as _
+            ; mov x1, SC_CONFIG.args_count as _
             ; adr x2, >bridge_args
             ; blr ip
             ; ldp fp, lr, [sp], #16
