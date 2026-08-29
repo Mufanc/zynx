@@ -1,5 +1,4 @@
 use crate::debug_on;
-use crate::ext::ResultExt;
 use anyhow::{Result, bail};
 use log::debug;
 use nix::libc;
@@ -10,18 +9,6 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 const SELINUX_XATTR: &CStr = c"security.selinux";
-const MAGISK_FILE_CONTEXT: &str = "u:object_r:magisk_file:s0";
-
-pub trait FileExt {
-    fn mark_as_magisk_file(&self);
-}
-
-impl<F: AsFd> FileExt for F {
-    fn mark_as_magisk_file(&self) {
-        fsetcon(self.as_fd(), MAGISK_FILE_CONTEXT).log_if_error();
-    }
-}
-
 pub fn getcon<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = CString::new(path.as_ref().as_os_str().as_bytes())?;
     let mut buffer = [0u8; 128];

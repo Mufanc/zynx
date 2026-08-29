@@ -1,10 +1,15 @@
 use anyhow::Result;
-use memfd::{FileSeal, Memfd, MemfdOptions};
+use memfd::{FileSeal, MemfdOptions};
 use nix::libc;
+use std::fs::File;
 use std::io::{Seek, SeekFrom, Write};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::{panic, slice};
+use zynx_misc::selinux::fsetcon;
 
-pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<Memfd> {
+const SYSTEM_LIB_FILE_CONTEXT: &str = "u:object_r:system_lib_file:s0";
+
+pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<OwnedFd> {
     let fd = MemfdOptions::default().allow_sealing(true).create(name)?;
 
     let mut file = fd.as_file();
@@ -19,7 +24,12 @@ pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<Memfd> {
         FileSeal::SealSeal,
     ])?;
 
-    Ok(fd)
+    let path = format!("/proc/self/fd/{}", fd.as_file().as_raw_fd());
+    let readonly: OwnedFd = File::open(path)?.into();
+    drop(fd);
+
+    fsetcon(&readonly, SYSTEM_LIB_FILE_CONTEXT)?;
+    Ok(readonly)
 }
 
 pub fn inject_panic_handler() {

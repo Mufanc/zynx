@@ -1,8 +1,7 @@
 use crate::misc::create_sealed_memfd;
 use anyhow::Result;
-use memfd::Memfd;
 use once_cell::sync::Lazy;
-use std::os::fd::{AsFd, BorrowedFd};
+use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
 
 static DATA: &[u8] = include_bytes!(concat!(
     env!("ROOT_DIR"),
@@ -15,7 +14,7 @@ static INSTANCE: Lazy<Bridge> =
     Lazy::new(|| Bridge::new(DATA).expect("failed to load zynx bridge"));
 
 pub struct Bridge {
-    fd: Memfd,
+    fd: OwnedFd,
 }
 
 impl Bridge {
@@ -31,6 +30,6 @@ impl Bridge {
 
 impl AsFd for Bridge {
     fn as_fd(&self) -> BorrowedFd<'_> {
-        self.fd.as_file().as_fd()
+        self.fd.as_fd()
     }
 }
