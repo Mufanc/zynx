@@ -1,5 +1,5 @@
-use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::PolicyProviderManager;
+use crate::config::ZynxConfigs;
+use crate::injector::context::ZynxContext;
 use crate::monitor::{Message, Monitor};
 use crate::{daemon, monitor};
 use anyhow::{Result, bail};
@@ -10,17 +10,19 @@ use nix::unistd;
 use nix::unistd::{Pid, SysconfVar};
 use once_cell::sync::Lazy;
 use procfs::process::Process;
+use std::sync::Arc;
 
 mod app;
 mod asm;
 mod bridge;
+mod context;
 mod misc;
 mod ptrace;
 
 pub static PAGE_SIZE: Lazy<usize> =
     Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);
 
-fn handle_event(event: &Message) -> Result<()> {
+fn handle_event(context: &Arc<ZynxContext>, event: &Message) -> Result<()> {
     match event {
         Message::PathMatches(pid, path) => {
             // Todo:
@@ -33,7 +35,7 @@ fn handle_event(event: &Message) -> Result<()> {
                 let args = Process::new(pid.as_raw())?.cmdline()?;
 
                 if args.iter().any(|arg| arg == "--start-system-server") {
-                    return ZygoteTracer::create(*pid);
+                    return ZygoteTracer::create(context.clone(), *pid);
                 }
 
                 info!("found `{ZYGOTE_NAME}` without system server argument: {pid} -> {args:?}")
@@ -47,21 +49,20 @@ fn handle_event(event: &Message) -> Result<()> {
     }
 }
 
-pub async fn run() -> Result<()> {
-    let config = monitor::Config {
+pub async fn run(config: ZynxConfigs) -> Result<()> {
+    let monitor_config = monitor::Config {
         target_paths: vec![],
         target_names: vec![ZYGOTE_NAME.into()],
     };
 
-    PackageInfoService::init()?;
-    PolicyProviderManager::init().await?;
-    Monitor::init(config)?;
+    let context = Arc::new(ZynxContext::new(&config).await?);
+    Monitor::init(monitor_config)?;
     daemon::notify_launcher_if_needed();
 
     let monitor = Monitor::instance();
 
     while let Some(event) = monitor.recv_msg().await {
-        if let Err(err) = handle_event(&event) {
+        if let Err(err) = handle_event(&context, &event) {
             error!("error while handling event {event:?}: {err:?}");
         }
     }
@@ -69,7 +70,7 @@ pub async fn run() -> Result<()> {
     bail!("monitor exited unexpectedly");
 }
 
-pub async fn attach_zygote(pid: i32) -> Result<()> {
+pub async fn attach_zygote(pid: i32, config: ZynxConfigs) -> Result<()> {
     let pid = Pid::from_raw(pid);
 
     // verify that the process is actually zygote64
@@ -79,16 +80,15 @@ pub async fn attach_zygote(pid: i32) -> Result<()> {
         bail!("process {pid} is not zygote64 (cmdline = {cmdline:?})");
     }
 
-    let config = monitor::Config {
+    let monitor_config = monitor::Config {
         target_paths: vec![],
         target_names: vec![ZYGOTE_NAME.into()],
     };
 
-    PackageInfoService::init()?;
-    PolicyProviderManager::init().await?;
-    Monitor::init(config)?;
+    let context = Arc::new(ZynxContext::new(&config).await?);
+    Monitor::init(monitor_config)?;
 
-    ZygoteTracer::create_attach(pid)?;
+    ZygoteTracer::create_attach(context.clone(), pid)?;
 
     let monitor = Monitor::instance();
 
@@ -99,7 +99,7 @@ pub async fn attach_zygote(pid: i32) -> Result<()> {
                 return Ok(());
             }
             _ => {
-                if let Err(err) = handle_event(&event) {
+                if let Err(err) = handle_event(&context, &event) {
                     error!("error while handling event {event:?}: {err:?}");
                 }
             }

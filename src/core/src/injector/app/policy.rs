@@ -4,11 +4,12 @@ mod liteloader;
 mod zygisk;
 
 use crate::android::packages::PackageInfoListLocked;
+use crate::config::ZynxConfigs;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 #[cfg(feature = "zygisk")]
 use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
-use anyhow::{Result, anyhow, bail};
+use anyhow::Result;
 use async_trait::async_trait;
 use futures::future;
 use log::warn;
@@ -18,11 +19,9 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
 use std::os::fd::OwnedFd;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::{fmt, mem};
 use zynx_bridge_shared::zygote::ProviderType;
-
-static POLICY_PROVIDER_MANAGER: OnceLock<PolicyProviderManager> = OnceLock::new();
 
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/zynx_policy.rs"));
@@ -237,20 +236,23 @@ pub struct PolicyProviderManager {
 }
 
 impl PolicyProviderManager {
-    pub async fn init() -> Result<()> {
+    pub async fn new(config: &ZynxConfigs) -> Result<Self> {
         let mut instance = Self::default();
 
-        instance.register::<DebuggerPolicyProvider>().await?;
-        instance.register::<LiteLoaderPolicyProvider>().await?;
+        if config.enable_debugger {
+            instance.register::<DebuggerPolicyProvider>().await?;
+        }
+
+        if config.enable_liteloader {
+            instance.register::<LiteLoaderPolicyProvider>().await?;
+        }
 
         #[cfg(feature = "zygisk")]
-        instance.register::<ZygiskPolicyProvider>().await?;
+        if config.enable_zygisk {
+            instance.register::<ZygiskPolicyProvider>().await?;
+        }
 
-        POLICY_PROVIDER_MANAGER
-            .set(instance)
-            .map_err(|_| anyhow!("duplicate called"))?;
-
-        Ok(())
+        Ok(instance)
     }
 
     pub async fn register<P: PolicyProvider + Default + 'static>(&mut self) -> Result<()> {
@@ -260,10 +262,6 @@ impl PolicyProviderManager {
         self.providers.push(Box::new(provider));
 
         Ok(())
-    }
-
-    pub fn instance() -> &'static Self {
-        POLICY_PROVIDER_MANAGER.wait()
     }
 
     /// Run fast check on all providers concurrently.

@@ -1,10 +1,9 @@
-use crate::config::ZynxConfigs;
 use crate::misc::create_sealed_memfd;
-use anyhow::{Context, Result, anyhow};
-use once_cell::sync::Lazy;
+use anyhow::{Context, Result};
 use std::borrow::Cow;
 use std::fs;
 use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::path::Path;
 
 #[cfg(feature = "embedded-bridge")]
 static DATA: &[u8] = include_bytes!(concat!(
@@ -14,15 +13,13 @@ static DATA: &[u8] = include_bytes!(concat!(
     "/libzynx_bridge.so"
 ));
 
-static INSTANCE: Lazy<Result<Bridge>> = Lazy::new(Bridge::new);
-
 pub struct Bridge {
     fd: OwnedFd,
 }
 
 impl Bridge {
-    fn new() -> Result<Self> {
-        let data = if let Some(path) = &ZynxConfigs::instance().bridge_file {
+    pub fn new(bridge_file: Option<&Path>) -> Result<Self> {
+        let data = if let Some(path) = bridge_file {
             Cow::Owned(
                 fs::read(path)
                     .with_context(|| format!("failed to read bridge: {}", path.display()))?,
@@ -40,12 +37,6 @@ impl Bridge {
         Ok(Self {
             fd: create_sealed_memfd("zynx::bridge", &data)?,
         })
-    }
-
-    pub fn instance() -> Result<&'static Self> {
-        INSTANCE
-            .as_ref()
-            .map_err(|err| anyhow!("failed to load zynx bridge: {err:#}"))
     }
 }
 

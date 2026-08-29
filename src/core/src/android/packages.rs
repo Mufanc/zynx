@@ -1,5 +1,5 @@
 use crate::android::inotify::AsyncInotify;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use log::{debug, error, info, warn};
 use nix::unistd::{Gid, Uid};
 use notify::event::{ModifyKind, RenameMode};
@@ -10,12 +10,11 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use tokio::task;
 use tokio::task::JoinHandle;
 
 static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
-static PACKAGE_INFO_SERVICE: OnceLock<PackageInfoService> = OnceLock::new();
 
 pub type PackageInfoListLocked<'a> = MappedRwLockReadGuard<'a, [PackageInfo]>;
 
@@ -84,7 +83,7 @@ pub struct PackageInfoService {
 }
 
 impl PackageInfoService {
-    pub fn init() -> Result<()> {
+    pub fn new() -> Result<Self> {
         let packages = task::block_in_place(parse_package_list)?;
         let map = Self::build_map(packages);
 
@@ -106,20 +105,10 @@ impl PackageInfoService {
             }
         });
 
-        PACKAGE_INFO_SERVICE
-            .set(Self {
-                data,
-                _watch_task: watch_task,
-            })
-            .map_err(|_| anyhow!("duplicate called"))?;
-
-        Ok(())
-    }
-
-    pub fn instance() -> &'static Self {
-        PACKAGE_INFO_SERVICE
-            .get()
-            .expect("package info service not initialized")
+        Ok(Self {
+            data,
+            _watch_task: watch_task,
+        })
     }
 
     pub fn query(&self, uid: Uid) -> Option<PackageInfoListLocked<'_>> {

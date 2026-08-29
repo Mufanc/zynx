@@ -1,8 +1,7 @@
-use crate::android::packages::PackageInfoService;
-use crate::injector::app::policy::{EmbryoCheckArgs, PolicyProviderManager, ProviderBundle};
+use crate::injector::app::policy::{EmbryoCheckArgs, ProviderBundle};
 use crate::injector::app::zygote::ZygoteMaps;
-use crate::injector::app::{SC_BRK, SC_CONFIG, ipc};
-use crate::injector::bridge::Bridge;
+use crate::injector::app::{SC_BRK, ipc};
+use crate::injector::context::ZynxContext;
 use crate::injector::ptrace::ext::WaitStatusExt;
 use crate::injector::ptrace::ext::base::PtraceExt;
 use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
@@ -26,6 +25,7 @@ use scopeguard::defer;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::os::fd::{AsFd, FromRawFd};
+use std::sync::Arc;
 use std::{fmt, mem};
 use syscalls::Sysno;
 use tokio::runtime::Handle;
@@ -44,6 +44,7 @@ static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 ///    library, calls pre/post hooks around the original specialize function,
 ///    and cleans itself up afterwards
 pub struct EmbryoInjector {
+    context: Arc<ZynxContext>,
     tracee: RemoteProcess,
     maps: ZygoteMaps,
     /// Address of the SpecializeCommon function in the remote process
@@ -59,8 +60,14 @@ impl RemoteLibraryResolver for EmbryoInjector {
 }
 
 impl EmbryoInjector {
-    pub fn new(pid: Pid, maps: ZygoteMaps, specialize_fn: usize) -> Self {
+    pub fn new(
+        context: Arc<ZynxContext>,
+        pid: Pid,
+        maps: ZygoteMaps,
+        specialize_fn: usize,
+    ) -> Self {
         Self {
+            context,
             tracee: RemoteProcess::new(pid),
             maps,
             specialize_fn,
@@ -100,14 +107,14 @@ impl EmbryoInjector {
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
                     // Capture registers and read the specialize function arguments
                     let regs = self.get_regs()?;
-                    let mut raw_args = vec![0; SC_CONFIG.args_count];
+                    let mut raw_args = vec![0; self.context.specialize_abi.args_count];
 
                     self.get_args(&mut raw_args)?;
                     // Restore the original code at the breakpoint site
                     self.restore_swbp()?;
 
                     // Parse the raw args into a structured form
-                    let args = SpecializeArgs::new(&raw_args, SC_CONFIG.ver);
+                    let args = SpecializeArgs::new(&raw_args, self.context.specialize_abi.ver);
 
                     debug!("{self} specialize args: {args:?}");
 
@@ -159,7 +166,7 @@ impl EmbryoInjector {
         // Todo: selinux check execmem?
 
         let uid = Uid::from_raw(args.uid as _);
-        let package_info = PackageInfoService::instance().query(uid);
+        let package_info = self.context.package_index.query(uid);
         let fast_args = EmbryoCheckArgs::new_fast(
             uid,
             Gid::from_raw(args.gid as _),
@@ -168,7 +175,7 @@ impl EmbryoInjector {
             package_info,
         );
 
-        let manager = PolicyProviderManager::instance();
+        let manager = &self.context.policy;
         let mut result = manager.check(&fast_args).await;
 
         if result.more_info {
@@ -221,8 +228,7 @@ impl EmbryoInjector {
         let conn = self.connect(trampoline_addr)?;
 
         // Install the bridge library fd into the remote process
-        let bridge = Bridge::instance()?;
-        let bridge_fd = self.install_fd(trampoline_addr, &conn, bridge.as_fd())?;
+        let bridge_fd = self.install_fd(trampoline_addr, &conn, self.context.bridge.as_fd())?;
 
         debug!("{self} bridge fd: {bridge_fd:?}");
 
@@ -247,7 +253,7 @@ impl EmbryoInjector {
         // Arguments passed to the bridge's pre-hook function
         let bridge_args = BridgeArgs {
             conn_fd: conn_fd_remote.unwrap_or(-1),
-            specialize_version: SC_CONFIG.ver,
+            specialize_version: self.context.specialize_abi.ver,
         };
 
         dynasm!(ops
@@ -300,7 +306,7 @@ impl EmbryoInjector {
             ; stp fp, lr, [sp, #-16]!
             ; mov ip, x0
             ; add x0, sp, 16
-            ; mov x1, SC_CONFIG.args_count as _
+            ; mov x1, self.context.specialize_abi.args_count as _
             ; adr x2, >bridge_args
             ; blr ip
             ; ldp fp, lr, [sp], #16

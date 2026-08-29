@@ -1,6 +1,4 @@
 use anyhow::{Context, Result};
-use log::info;
-use once_cell::sync::Lazy;
 use r3solvr::{BasicResolver, Query, Section, Symbol, SymbolResolver};
 use strum::IntoEnumIterator;
 use zynx_bridge_shared::zygote::SpecializeVersion;
@@ -23,7 +21,7 @@ pub struct SpecializeCommonConfig {
 }
 
 impl SpecializeCommonConfig {
-    fn resolve() -> Result<Self> {
+    pub fn resolve() -> Result<Self> {
         let resolver = BasicResolver::from_file(SC_LIBRARY_PATH)?;
 
         let (sym, ver) = SpecializeVersion::iter()
@@ -46,11 +44,5 @@ impl SpecializeCommonConfig {
         })
     }
 }
-
-pub static SC_CONFIG: Lazy<SpecializeCommonConfig> = Lazy::new(|| {
-    let config = SpecializeCommonConfig::resolve().expect("failed to resolve SpecializeCommon");
-    info!("SpecializeCommon config: {config:?}");
-    config
-});
 
 pub static SC_BRK: [u8; 4] = [0x00, 0x00, 0x20, 0xd4]; // brk #0

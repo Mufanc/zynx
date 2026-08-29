@@ -10,7 +10,6 @@ mod monitor;
 use crate::cli::{Cli, Command};
 use crate::config::ZynxConfigs;
 use crate::misc::inject_panic_handler;
-use anyhow::Result;
 use log::LevelFilter;
 use std::env;
 use tokio::runtime::Builder;
@@ -31,37 +30,33 @@ fn init_logger() {
     }
 }
 
-fn main() -> Result<()> {
+fn main() -> anyhow::Result<()> {
     init_logger();
 
     let cli = Cli::parse_args();
 
-    match cli.command {
-        Some(Command::Daemon) => {
-            daemon::launch_daemon()?;
-        }
-        Some(Command::AttachZygote { pid }) => {
-            ZynxConfigs::init(&cli.configs)?;
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(async {
-                    inject_panic_handler();
-                    injector::attach_zygote(pid).await
-                })?;
-        }
-        None => {
-            ZynxConfigs::init(&cli.configs)?;
-            daemon::daemonize_if_needed()?;
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(async {
-                    inject_panic_handler();
-                    injector::run().await
-                })?;
-        }
+    let attach_pid = match cli.command {
+        Some(Command::Daemon) => return daemon::launch_daemon(),
+        Some(Command::AttachZygote { pid }) => Some(pid),
+        None => None,
+    };
+
+    let config = ZynxConfigs::new(&cli.configs)?;
+    if attach_pid.is_none() {
+        daemon::daemonize_if_needed()?;
     }
+
+    Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            inject_panic_handler();
+            if let Some(pid) = attach_pid {
+                injector::attach_zygote(pid, config).await
+            } else {
+                injector::run(config).await
+            }
+        })?;
 
     Ok(())
 }

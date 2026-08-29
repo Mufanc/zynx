@@ -1,5 +1,5 @@
-use crate::injector::app::SC_CONFIG;
 use crate::injector::app::embryo::EmbryoInjector;
+use crate::injector::context::ZynxContext;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
 use log::{debug, info, warn};
@@ -72,12 +72,13 @@ impl ZygoteMaps {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 pub struct ZygoteTracer {
+    context: Arc<ZynxContext>,
     maps: ZygoteMaps,
     specialize_fn: usize,
 }
 
 impl ZygoteTracer {
-    pub fn create(pid: Pid) -> Result<()> {
+    pub fn create(context: Arc<ZynxContext>, pid: Pid) -> Result<()> {
         info!("found zygote process: {pid}");
 
         defer! {
@@ -88,10 +89,10 @@ impl ZygoteTracer {
 
         let maps = ZygoteMaps::parse(pid)?;
         let library_base = maps
-            .find_library_base(SC_CONFIG.lib)
+            .find_library_base(context.specialize_abi.lib)
             .context("SpecializeCommon: failed to find libandroid_runtime.so base address")?;
 
-        let sc_addr = library_base + SC_CONFIG.sym.addr;
+        let sc_addr = library_base + context.specialize_abi.sym.addr;
         let Some(sc_vma) = maps.find_vma(sc_addr) else {
             bail!("SpecializeCommon: memory region not found")
         };
@@ -108,6 +109,7 @@ impl ZygoteTracer {
 
         let mut tracer = ZYGOTE_TRACER.write();
         tracer.replace(Self {
+            context,
             specialize_fn: sc_addr,
             maps,
         });
@@ -115,7 +117,7 @@ impl ZygoteTracer {
         Ok(())
     }
 
-    pub fn create_attach(pid: Pid) -> Result<()> {
+    pub fn create_attach(context: Arc<ZynxContext>, pid: Pid) -> Result<()> {
         info!("attaching to running zygote process: {pid}");
 
         // stop zygote to prevent state changes during maps parsing
@@ -129,10 +131,10 @@ impl ZygoteTracer {
 
         let maps = ZygoteMaps::parse(pid)?;
         let library_base = maps
-            .find_library_base(SC_CONFIG.lib)
+            .find_library_base(context.specialize_abi.lib)
             .context("SpecializeCommon: failed to find libandroid_runtime.so base address")?;
 
-        let sc_addr = library_base + SC_CONFIG.sym.addr;
+        let sc_addr = library_base + context.specialize_abi.sym.addr;
         let Some(sc_vma) = maps.find_vma(sc_addr) else {
             bail!("SpecializeCommon: memory region not found")
         };
@@ -149,6 +151,7 @@ impl ZygoteTracer {
 
         let mut tracer = ZYGOTE_TRACER.write();
         tracer.replace(Self {
+            context,
             specialize_fn: sc_addr,
             maps,
         });
@@ -167,13 +170,14 @@ impl ZygoteTracer {
 
         let specialize_fn = tracer.specialize_fn;
         let maps = tracer.maps.clone();
+        let context = tracer.context.clone();
 
         drop(lock);
 
         task::spawn(async move {
             let task_handle = task::spawn_blocking(move || {
                 let start = Instant::now();
-                EmbryoInjector::new(pid, maps, specialize_fn)
+                EmbryoInjector::new(context, pid, maps, specialize_fn)
                     .start()
                     .log_if_error();
                 let elapsed = start.elapsed();

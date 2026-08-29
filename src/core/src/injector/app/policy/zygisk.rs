@@ -1,5 +1,3 @@
-use crate::android::packages::PackageInfoService;
-use crate::config::ZynxConfigs;
 use crate::injector::app::policy::proto::{
     CheckArgsFast, CheckArgsSlow, CheckResponse, CheckResult, PackageInfo,
 };
@@ -427,10 +425,6 @@ impl PolicyProvider for ZygiskPolicyProvider {
     }
 
     async fn init(&self) -> Result<()> {
-        if !ZynxConfigs::instance().enable_zygisk {
-            return Ok(());
-        }
-
         let adapters = scan_modules()?;
         *self.adapters.write() = adapters;
 
@@ -438,10 +432,6 @@ impl PolicyProvider for ZygiskPolicyProvider {
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
-        if !ZynxConfigs::instance().enable_zygisk {
-            return PolicyDecision::Deny;
-        }
-
         // Clone adapter data and release lock before any await
         let adapter_data: Vec<_> = {
             let adapters = self.adapters.read();
@@ -551,8 +541,9 @@ impl PolicyProvider for ZygiskPolicyProvider {
 }
 
 fn build_fast_args(fast: &EmbryoCheckArgsFast) -> CheckArgsFast {
-    let packages: Vec<_> = PackageInfoService::instance()
-        .query(fast.uid)
+    let packages: Vec<_> = fast
+        .package_info
+        .as_deref()
         .map(|pkgs| {
             pkgs.iter()
                 .map(|pkg| PackageInfo {

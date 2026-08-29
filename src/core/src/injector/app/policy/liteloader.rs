@@ -1,6 +1,4 @@
 use crate::android::inotify::AsyncInotify;
-use crate::android::packages::PackageInfoService;
-use crate::config::ZynxConfigs;
 use crate::injector::app::policy::{Attachment, EmbryoCheckArgs, PolicyDecision, PolicyProvider};
 use crate::misc::create_sealed_memfd;
 use anyhow::{Result, bail};
@@ -166,10 +164,6 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
     }
 
     async fn init(&self) -> Result<()> {
-        if !ZynxConfigs::instance().enable_liteloader {
-            return Ok(());
-        }
-
         match fs::metadata(&*LITE_LIBRARIES_DIR) {
             Ok(meta) => {
                 if !meta.is_dir() {
@@ -206,13 +200,10 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
     }
 
     async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
-        if !ZynxConfigs::instance().enable_liteloader {
-            return PolicyDecision::Deny;
-        }
-
         let libs = self.libs.read();
-        let inject_libs = PackageInfoService::instance()
-            .query(args.uid)
+        let inject_libs = args
+            .package_info
+            .as_deref()
             .and_then(|pkgs| pkgs.iter().find_map(|pkg| libs.get(&pkg.name)));
 
         if let Some(libs) = inject_libs {
