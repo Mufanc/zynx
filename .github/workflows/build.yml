@@ -74,6 +74,7 @@ jobs:
           path: |
             target/aarch64-linux-android/${{ matrix.profile }}/zynx
             target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
+            target/aarch64-linux-android/${{ matrix.profile }}/libzynx_bridge.so.dwp
 
       - name: Upload split-bridge artifact
         if: ${{ matrix.bridge.split }}
@@ -84,3 +85,4 @@ jobs:
             target/aarch64-linux-android/${{ matrix.profile }}/zynx
             target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
             target/aarch64-linux-android/${{ matrix.profile }}/libzynx_bridge.so
+            target/aarch64-linux-android/${{ matrix.profile }}/libzynx_bridge.so.dwp
