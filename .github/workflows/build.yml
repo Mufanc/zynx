@@ -18,7 +18,18 @@ jobs:
     strategy:
       matrix:
         profile: [debug, release]
-        zygisk: [zygisk, no-zygisk]
+        zygisk:
+          - name: zygisk
+            feature: "zynx/zygisk"
+          - name: no-zygisk
+            feature: ""
+        bridge:
+          - name: embedded-bridge
+            feature: "zynx/embedded-bridge"
+            split: false
+          - name: split-bridge
+            feature: ""
+            split: true
 
     steps:
       - name: Checkout
@@ -46,12 +57,30 @@ jobs:
         run: cargo binstall bpf-linker --no-confirm
 
       - name: Build
-        run: just build ${{ matrix.profile }} ${{ matrix.zygisk }}
+        shell: bash
+        run: |
+          features=()
+          for feature in '${{ matrix.zygisk.feature }}' '${{ matrix.bridge.feature }}'; do
+            [[ -n "$feature" ]] && features+=("$feature")
+          done
+          feature_list="$(IFS=,; echo "${features[*]}")"
+          just build ${{ matrix.profile }} "$feature_list" false
 
-      - name: Upload artifact
+      - name: Upload embedded-bridge artifact
+        if: ${{ !matrix.bridge.split }}
         uses: actions/upload-artifact@v7
         with:
-          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk }}
+          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk.name }}-${{ matrix.bridge.name }}
           path: |
             target/aarch64-linux-android/${{ matrix.profile }}/zynx
             target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
+
+      - name: Upload split-bridge artifact
+        if: ${{ matrix.bridge.split }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk.name }}-${{ matrix.bridge.name }}
+          path: |
+            target/aarch64-linux-android/${{ matrix.profile }}/zynx
+            target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
+            target/aarch64-linux-android/${{ matrix.profile }}/libzynx_bridge.so

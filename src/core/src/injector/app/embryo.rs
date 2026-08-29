@@ -221,7 +221,7 @@ impl EmbryoInjector {
         let conn = self.connect(trampoline_addr)?;
 
         // Install the bridge library fd into the remote process
-        let bridge = Bridge::instance();
+        let bridge = Bridge::instance()?;
         let bridge_fd = self.install_fd(trampoline_addr, &conn, bridge.as_fd())?;
 
         debug!("{self} bridge fd: {bridge_fd:?}");

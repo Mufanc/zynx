@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["zygisk"]
+default = ["embedded-bridge", "zygisk"]
+embedded-bridge = []
 zygisk = ["zynx-bridge/zygisk"]
 
 [dependencies]

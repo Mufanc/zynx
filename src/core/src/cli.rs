@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(about = "Zynx - an eBPF-based Android process injection framework", version, long_version = concat!(env!("CARGO_PKG_VERSION"), " (commit ", env!("GIT_COMMIT_HASH"), ")"))]
@@ -23,6 +24,14 @@ pub enum Command {
 
 #[derive(Args, Clone)]
 pub struct CfgOptions {
+    #[clap(
+        long,
+        global = true,
+        value_name = "PATH",
+        help = "Load the bridge library from PATH instead of the embedded copy"
+    )]
+    pub cfg_bridge_file: Option<PathBuf>,
+
     #[clap(
         long,
         global = true,

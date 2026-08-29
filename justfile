@@ -11,14 +11,15 @@ LLVM_BIN := ONDK_PATH / "toolchains/llvm/prebuilt" / HOST_TAG / "bin"
 
 export CC := LLVM_BIN / ("aarch64-linux-android" + TARGET_SDK + "-clang")
 
-build variant="debug" features="": setup-ondk
+build variant="debug" features="" default_features="true": setup-ondk
     {{ if variant == "release" { "PROFILE=release" } else { "" } }} \
     cargo build \
         -Z build-std \
         --target aarch64-linux-android \
         --config target.aarch64-linux-android.linker=\"{{CC}}\" \
         {{ if variant == "release" { "--release" } else { "" } }} \
-        {{ if features == "no-zygisk" { "--no-default-features" } else { "" } }}
+        {{ if default_features == "true" { "" } else { "--no-default-features" } }} \
+        {{ if features == "" { "" } else { "--features \"" + features + "\"" } }}
 
 deploy variant="debug": (build variant)
     adb push target/aarch64-linux-android/{{variant}}/zynx /data/local/tmp/zynx
