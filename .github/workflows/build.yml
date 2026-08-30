@@ -51,7 +51,7 @@ jobs:
         run: python3 scripts/setup-ondk.py --version $ONDK_VERSION
 
       - name: Setup cargo-binstall
-        uses: cargo-bins/cargo-binstall@v1.21.1
+        uses: cargo-bins/cargo-binstall@v1.22.0
 
       - name: Install bpf-linker
         run: cargo binstall bpf-linker --no-confirm
