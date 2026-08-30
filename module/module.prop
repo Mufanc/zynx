@@ -1,0 +1,6 @@
+id=zynx
+name=Zynx
+version=v1.0.0
+versionCode=1
+author=Mufanc
+description=An eBPF-based Android process injection framework
