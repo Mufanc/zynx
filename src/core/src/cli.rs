@@ -14,7 +14,11 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Run as daemon (for KernelSU/Magisk module)
-    Daemon,
+    Daemon {
+        /// Wait for the system BPF loader before initializing
+        #[arg(long)]
+        wait_bpfloader: bool,
+    },
     /// Attach to a running zygote process
     AttachZygote {
         /// PID of the zygote64 process

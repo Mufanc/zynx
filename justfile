@@ -15,6 +15,7 @@ package-module variant="release": (build variant "" "false")
     rm -rf target/module target/module-{{variant}}.zip
     cp -R module target/module
     cp target/aarch64-linux-android/{{variant}}/zynx target/module/bin
+    cp target/aarch64-linux-android/{{variant}}/zynx-bpfloader-wrapper target/module/bin/bpfloader-wrapper
     cp target/aarch64-linux-android/{{variant}}/libzynx_bridge.so target/module/bin
     rm target/module/bin/.keep
     cd target/module && zip -r ../module-{{variant}}.zip .

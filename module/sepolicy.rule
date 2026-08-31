@@ -1,0 +1,2 @@
+allow bpfloader tmpfs filesystem unmount
+allow bpfloader ksu unix_stream_socket connectto

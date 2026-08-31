@@ -1,0 +1,10 @@
+[package]
+name = "zynx-bpfloader-wrapper"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rustix = { workspace = true, features = ["fs", "mount", "net"] }
+
+[lints]
+workspace = true

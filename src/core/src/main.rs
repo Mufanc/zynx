@@ -36,14 +36,19 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse_args();
 
     let attach_pid = match cli.command {
-        Some(Command::Daemon) => return daemon::launch_daemon(),
+        Some(Command::Daemon { wait_bpfloader }) => {
+            // The child re-enters `main` without a subcommand; this process only waits for it.
+            return daemon::launch_daemon(wait_bpfloader);
+        }
         Some(Command::AttachZygote { pid }) => Some(pid),
         None => None,
     };
 
     let config = ZynxConfigs::new(&cli.configs)?;
     if attach_pid.is_none() {
+        // Attach mode must stay foreground; only the normal injector path may be a daemon child.
         daemon::daemonize_if_needed()?;
+        daemon::wait_for_bpfloader_if_needed()?;
     }
 
     Builder::new_multi_thread()

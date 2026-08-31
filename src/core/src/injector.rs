@@ -57,7 +57,7 @@ pub async fn run(config: ZynxConfigs) -> Result<()> {
 
     let context = Arc::new(ZynxContext::new(&config).await?);
     Monitor::init(monitor_config)?;
-    daemon::notify_launcher_if_needed();
+    daemon::notify_started();
 
     let monitor = Monitor::instance();
 

@@ -2242,6 +2242,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zynx-bpfloader-wrapper"
+version = "1.0.0"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "zynx-bridge"
 version = "1.0.0"
 dependencies = [
