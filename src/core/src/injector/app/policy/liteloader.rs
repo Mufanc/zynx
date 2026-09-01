@@ -199,7 +199,7 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
         Ok(())
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision {
         let libs = self.libs.read();
         let inject_libs = args
             .package_info

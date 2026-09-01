@@ -3,7 +3,7 @@ mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
 
-use crate::android::packages::PackageInfoListLocked;
+use crate::android::packages::PackageInfo;
 use crate::config::ZynxConfigs;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
@@ -28,41 +28,41 @@ pub mod proto {
 }
 
 #[allow(unused)]
-pub struct EmbryoCheckArgsFast<'a> {
+pub struct EmbryoCheckArgsFast {
     pub uid: Uid,
     pub gid: Gid,
     pub is_system_server: bool,
     pub is_child_zygote: bool,
-    pub package_info: Option<PackageInfoListLocked<'a>>,
+    pub package_info: Option<Arc<[PackageInfo]>>,
 }
 
 #[allow(unused)]
-pub struct EmbryoCheckArgsSlow<'a> {
-    fast_args: EmbryoCheckArgsFast<'a>,
+pub struct EmbryoCheckArgsSlow {
+    fast_args: EmbryoCheckArgsFast,
     pub nice_name: Option<String>,
     pub app_data_dir: Option<String>,
 }
 
-impl<'a> Deref for EmbryoCheckArgsSlow<'a> {
-    type Target = EmbryoCheckArgsFast<'a>;
+impl Deref for EmbryoCheckArgsSlow {
+    type Target = EmbryoCheckArgsFast;
 
     fn deref(&self) -> &Self::Target {
         &self.fast_args
     }
 }
 
-pub enum EmbryoCheckArgs<'a> {
-    Fast(EmbryoCheckArgsFast<'a>),
-    Slow(EmbryoCheckArgsSlow<'a>),
+pub enum EmbryoCheckArgs {
+    Fast(EmbryoCheckArgsFast),
+    Slow(EmbryoCheckArgsSlow),
 }
 
-impl<'a> EmbryoCheckArgs<'a> {
+impl EmbryoCheckArgs {
     pub fn new_fast(
         uid: Uid,
         gid: Gid,
         is_system_server: bool,
         is_child_zygote: bool,
-        package_info: Option<PackageInfoListLocked<'a>>,
+        package_info: Option<Arc<[PackageInfo]>>,
     ) -> Self {
         EmbryoCheckArgs::Fast(EmbryoCheckArgsFast {
             uid,
@@ -95,7 +95,7 @@ impl<'a> EmbryoCheckArgs<'a> {
     //     !self.is_fast()
     // }
 
-    pub fn assume_fast(&self) -> &EmbryoCheckArgsFast<'a> {
+    pub fn assume_fast(&self) -> &EmbryoCheckArgsFast {
         if let EmbryoCheckArgs::Fast(args) = self {
             return args;
         }
@@ -103,7 +103,7 @@ impl<'a> EmbryoCheckArgs<'a> {
         panic!("unexpected check args: expected `fast` but got `slow`");
     }
 
-    pub fn assume_slow(&self) -> &EmbryoCheckArgsSlow<'a> {
+    pub fn assume_slow(&self) -> &EmbryoCheckArgsSlow {
         if let EmbryoCheckArgs::Slow(args) = self {
             return args;
         }
@@ -112,8 +112,8 @@ impl<'a> EmbryoCheckArgs<'a> {
     }
 }
 
-impl<'a> Deref for EmbryoCheckArgs<'a> {
-    type Target = EmbryoCheckArgsFast<'a>;
+impl Deref for EmbryoCheckArgs {
+    type Target = EmbryoCheckArgsFast;
 
     fn deref(&self) -> &Self::Target {
         match self {
@@ -219,11 +219,11 @@ pub trait PolicyProvider: Send + Sync {
         Ok(())
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision;
+    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision;
 
     async fn recheck(
         &self,
-        args: &EmbryoCheckArgs<'_>,
+        args: &EmbryoCheckArgs,
         _state: Box<dyn Any + Send + Sync>,
     ) -> PolicyDecision {
         self.check(args).await
@@ -265,7 +265,7 @@ impl PolicyProviderManager {
     }
 
     /// Run fast check on all providers concurrently.
-    pub async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecisions {
+    pub async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecisions {
         let futures: Vec<_> = self.providers.iter().map(|p| p.check(args)).collect();
 
         let decisions = future::join_all(futures).await;
@@ -281,7 +281,7 @@ impl PolicyProviderManager {
 
     /// Re-check providers that returned MoreInfo with slow (full) args.
     /// Cached state from the fast check is forwarded to `recheck` when available.
-    pub async fn recheck_slow(&self, args: &EmbryoCheckArgs<'_>, result: &mut PolicyDecisions) {
+    pub async fn recheck_slow(&self, args: &EmbryoCheckArgs, result: &mut PolicyDecisions) {
         result.more_info = false;
 
         // Extract MoreInfo decisions along with their cached state,

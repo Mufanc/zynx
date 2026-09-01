@@ -5,7 +5,7 @@ use nix::unistd::{Gid, Uid};
 use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, EventKindMask};
 use once_cell::sync::Lazy;
-use parking_lot::{MappedRwLockReadGuard, RwLock, RwLockReadGuard};
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -15,8 +15,6 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
-
-pub type PackageInfoListLocked<'a> = MappedRwLockReadGuard<'a, [PackageInfo]>;
 
 #[derive(Clone, Debug)]
 pub struct PackageInfo {
@@ -78,7 +76,7 @@ pub fn parse_package_list() -> Result<Vec<PackageInfo>> {
 }
 
 pub struct PackageInfoService {
-    data: Arc<RwLock<HashMap<Uid, Vec<PackageInfo>>>>,
+    data: Arc<RwLock<HashMap<Uid, Arc<[PackageInfo]>>>>,
     _watch_task: JoinHandle<()>,
 }
 
@@ -111,22 +109,25 @@ impl PackageInfoService {
         })
     }
 
-    pub fn query(&self, uid: Uid) -> Option<PackageInfoListLocked<'_>> {
-        let lock = self.data.read();
-        RwLockReadGuard::try_map(lock, |map| map.get(&uid).map(|v| v.as_slice())).ok()
+    pub fn query(&self, uid: Uid) -> Option<Arc<[PackageInfo]>> {
+        self.data.read().get(&uid).cloned()
     }
 
-    fn build_map(packages: Vec<PackageInfo>) -> HashMap<Uid, Vec<PackageInfo>> {
+    fn build_map(packages: Vec<PackageInfo>) -> HashMap<Uid, Arc<[PackageInfo]>> {
         let mut map: HashMap<Uid, Vec<PackageInfo>> = HashMap::new();
+
         for info in packages {
             map.entry(info.uid).or_default().push(info);
         }
-        map
+
+        map.into_iter()
+            .map(|(uid, packages)| (uid, packages.into()))
+            .collect()
     }
 
     async fn watch_loop(
         mut inotify: AsyncInotify,
-        data: Arc<RwLock<HashMap<Uid, Vec<PackageInfo>>>>,
+        data: Arc<RwLock<HashMap<Uid, Arc<[PackageInfo]>>>>,
     ) -> Result<()> {
         loop {
             let event = inotify.wait().await?;
@@ -140,7 +141,7 @@ impl PackageInfoService {
         }
     }
 
-    fn reload_packages(data: &RwLock<HashMap<Uid, Vec<PackageInfo>>>) {
+    fn reload_packages(data: &RwLock<HashMap<Uid, Arc<[PackageInfo]>>>) {
         match parse_package_list() {
             Ok(packages) => {
                 let new_map = Self::build_map(packages);
@@ -156,5 +157,34 @@ impl PackageInfoService {
                 warn!("failed to reload packages.list: {err:?}, keeping old data");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn query_owns_snapshot() {
+        let uid = Uid::from_raw(1000);
+        let data = Arc::new(RwLock::new(PackageInfoService::build_map(vec![
+            PackageInfo {
+                name: "android".into(),
+                uid,
+                debuggable: false,
+                data_dir: "/data/system".into(),
+                seinfo: "platform".into(),
+                gids: Vec::new(),
+            },
+        ])));
+        let service = PackageInfoService {
+            data,
+            _watch_task: tokio::spawn(std::future::pending()),
+        };
+
+        let snapshot = service.query(uid).unwrap();
+        service.data.write().clear();
+
+        assert_eq!(snapshot[0].name, "android");
     }
 }

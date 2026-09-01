@@ -13,7 +13,7 @@ impl PolicyProvider for DebuggerPolicyProvider {
         ProviderType::Debugger
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision {
         let Some(pkgs) = args.package_info.as_deref() else {
             return PolicyDecision::Deny;
         };

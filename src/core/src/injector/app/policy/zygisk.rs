@@ -431,7 +431,7 @@ impl PolicyProvider for ZygiskPolicyProvider {
         Ok(())
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs<'_>) -> PolicyDecision {
+    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision {
         // Clone adapter data and release lock before any await
         let adapter_data: Vec<_> = {
             let adapters = self.adapters.read();
@@ -492,7 +492,7 @@ impl PolicyProvider for ZygiskPolicyProvider {
 
     async fn recheck(
         &self,
-        args: &EmbryoCheckArgs<'_>,
+        args: &EmbryoCheckArgs,
         state: Box<dyn Any + Send + Sync>,
     ) -> PolicyDecision {
         let slow = args.assume_slow();
