@@ -1,11 +1,6 @@
-use std::ffi::{CStr, CString, c_char};
+use nix::libc::{self, PROP_VALUE_MAX};
+use std::ffi::{CStr, CString};
 use std::ops::Deref;
-
-const PROP_VALUE_MAX: usize = 92;
-
-unsafe extern "C" {
-    fn __system_property_get(name: *const c_char, value: *mut c_char) -> u32;
-}
 
 // https://cs.android.com/android/platform/superproject/main/+/main:system/libbase/parsebool.cpp;l=23-31;drc=61197364367c9e404c7da6900658f1b16c42d0da
 fn parse_bool(value: &str) -> Option<bool> {
@@ -40,9 +35,9 @@ impl Deref for Property {
 
 pub fn get(name: &str) -> Option<Property> {
     let name = CString::new(name).ok()?;
-    let mut buffer = [0u8; PROP_VALUE_MAX + 1];
+    let mut buffer = [0u8; PROP_VALUE_MAX as usize];
 
-    let len = unsafe { __system_property_get(name.as_ptr(), buffer.as_mut_ptr() as _) };
+    let len = unsafe { libc::__system_property_get(name.as_ptr(), buffer.as_mut_ptr() as _) };
 
     if len == 0 {
         return None;
