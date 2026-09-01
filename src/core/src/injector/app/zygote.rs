@@ -2,7 +2,7 @@ use crate::injector::app::embryo::EmbryoInjector;
 use crate::injector::context::ZynxContext;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
-use log::{debug, info, warn};
+use log::{debug, info};
 use nix::fcntl;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -12,9 +12,8 @@ use parking_lot::RwLock;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
 use scopeguard::defer;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::task;
-use tokio::time::timeout;
 use zynx_misc::ext::ResultExt;
 
 pub const ZYGOTE_NAME: &str = "zygote64";
@@ -174,19 +173,13 @@ impl ZygoteTracer {
 
         drop(lock);
 
-        task::spawn(async move {
-            let task_handle = task::spawn_blocking(move || {
-                let start = Instant::now();
-                EmbryoInjector::new(context, pid, maps, specialize_fn)
-                    .start()
-                    .log_if_error();
-                let elapsed = start.elapsed();
-                debug!("embryo {pid} check/injection completed in {elapsed:.2?}");
-            });
-
-            if timeout(Duration::from_secs(5), task_handle).await.is_err() {
-                warn!("embryo injector for {pid} take too long to run...")
-            }
+        task::spawn_blocking(move || {
+            let start = Instant::now();
+            EmbryoInjector::new(context, pid, maps, specialize_fn)
+                .start()
+                .log_if_error();
+            let elapsed = start.elapsed();
+            debug!("embryo {pid} check/injection completed in {elapsed:.2?}");
         });
 
         Ok(())
