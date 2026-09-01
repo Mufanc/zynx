@@ -21,7 +21,7 @@ use nix::sys::signal::Signal;
 use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
 use once_cell::sync::Lazy;
-use scopeguard::defer;
+use scopeguard::ScopeGuard;
 use std::fmt::{Display, Formatter};
 use std::ops::Deref;
 use std::os::fd::{AsFd, FromRawFd};
@@ -84,9 +84,9 @@ impl EmbryoInjector {
         self.seize()?;
         self.kill(Signal::SIGCONT)?;
 
-        defer! {
+        let detach_defer = scopeguard::guard((), |_| {
             self.detach(None).log_if_error();
-        }
+        });
 
         // Event loop: wait for the breakpoint or process termination
         loop {
@@ -97,11 +97,13 @@ impl EmbryoInjector {
             match status {
                 WaitStatus::Exited(_, code) => {
                     warn!("embryo exited with code: {code}");
-                    break;
+                    ScopeGuard::into_inner(detach_defer);
+                    return Ok(());
                 }
                 WaitStatus::Signaled(_, sig, _) => {
                     warn!("embryo killed by {sig}");
-                    break;
+                    ScopeGuard::into_inner(detach_defer);
+                    return Ok(());
                 }
                 // SIGTRAP means the breakpoint was hit (specialize function called)
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
