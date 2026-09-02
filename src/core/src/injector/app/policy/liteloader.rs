@@ -22,7 +22,7 @@ use zynx_bridge_shared::zygote::ProviderType;
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(.+)-(.+)\.(so|dex)$").unwrap());
+    Lazy::new(|| Regex::new(r"^(.+)@(.+)\.(so|dex)$").unwrap());
 
 type Libraries = HashMap<String, Vec<CachedLibraryEntry>>;
 type LibrariesArcLocked = Arc<RwLock<Libraries>>;
