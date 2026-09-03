@@ -15,6 +15,7 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
+const PER_USER_RANGE: u32 = 100_000;
 
 #[derive(Clone, Debug)]
 pub struct PackageInfo {
@@ -110,7 +111,8 @@ impl PackageInfoService {
     }
 
     pub fn query(&self, uid: Uid) -> Option<Arc<[PackageInfo]>> {
-        self.data.read().get(&uid).cloned()
+        let app_id = Uid::from_raw(uid.as_raw() % PER_USER_RANGE);
+        self.data.read().get(&app_id).cloned()
     }
 
     fn build_map(packages: Vec<PackageInfo>) -> HashMap<Uid, Arc<[PackageInfo]>> {
@@ -165,15 +167,15 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn query_owns_snapshot() {
-        let uid = Uid::from_raw(1000);
+    async fn query_uses_app_id_and_owns_snapshot() {
+        let app_id = Uid::from_raw(10_123);
         let data = Arc::new(RwLock::new(PackageInfoService::build_map(vec![
             PackageInfo {
-                name: "android".into(),
-                uid,
+                name: "com.example".into(),
+                uid: app_id,
                 debuggable: false,
-                data_dir: "/data/system".into(),
-                seinfo: "platform".into(),
+                data_dir: "/data/user/0/com.example".into(),
+                seinfo: "default".into(),
                 gids: Vec::new(),
             },
         ])));
@@ -182,9 +184,9 @@ mod tests {
             _watch_task: tokio::spawn(std::future::pending()),
         };
 
-        let snapshot = service.query(uid).unwrap();
+        let snapshot = service.query(Uid::from_raw(1_010_123)).unwrap();
         service.data.write().clear();
 
-        assert_eq!(snapshot[0].name, "android");
+        assert_eq!(snapshot[0].name, "com.example");
     }
 }
