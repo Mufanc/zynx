@@ -2,6 +2,7 @@ mod debugger;
 mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
+mod zynx;
 
 use crate::android::packages::PackageInfo;
 use crate::config::ZynxConfigs;
