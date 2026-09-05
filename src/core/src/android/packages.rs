@@ -1,3 +1,4 @@
+use crate::android::PER_USER_RANGE;
 use crate::android::inotify::AsyncInotify;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -15,7 +16,6 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.list".into());
-const PER_USER_RANGE: u32 = 100_000;
 
 #[derive(Clone, Debug)]
 pub struct PackageInfo {

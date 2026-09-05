@@ -47,6 +47,7 @@ syscalls = { version = "0.8" }
 tokio = { version = "1", features = ["full"] }
 toml = "1.1.2+spec-1.1.0"
 uds = "0.4.2"
+validator = { version = "0.20", features = ["derive"] }
 which = "8.0"
 wincode = { version = "0.6" }
 

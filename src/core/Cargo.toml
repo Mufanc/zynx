@@ -37,6 +37,7 @@ strum = { workspace = true }
 syscalls = { workspace = true }
 tokio = { workspace = true }
 toml = { workspace = true }
+validator = { workspace = true }
 wincode = { workspace = true }
 zynx-bridge = { path = "../bridge" }
 zynx-bridge-shared = { path = "../bridge-shared" }
