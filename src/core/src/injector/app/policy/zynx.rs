@@ -200,7 +200,7 @@ impl PolicyProvider for ZynxPolicyProvider {
         for module in modules {
             match module.manifest.matches(args) {
                 MatchResult::Match => attachments.push(module.attachment()),
-                MatchResult::MoreInfo => return PolicyDecision::MoreInfo(None),
+                MatchResult::MoreInfo => return PolicyDecision::more_info(),
                 MatchResult::NoMatch => {}
             }
         }
@@ -450,7 +450,7 @@ mod tests {
         );
         assert!(matches!(
             provider.check(&fast).await,
-            PolicyDecision::MoreInfo(None)
+            PolicyDecision::MoreInfo { state: None }
         ));
 
         let PolicyDecision::Allow {

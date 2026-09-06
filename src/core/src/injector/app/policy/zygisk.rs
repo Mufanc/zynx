@@ -467,10 +467,12 @@ impl PolicyProvider for ZygiskPolicyProvider {
         if has_pending {
             // Need recheck for some adapters, store module_ids for recheck
             let module_ids: Vec<_> = adapter_data.into_iter().map(|(_, id)| id).collect();
-            PolicyDecision::MoreInfo(Some(Box::new(ZygiskCheckState {
-                results,
-                module_ids,
-            })))
+            PolicyDecision::MoreInfo {
+                state: Some(Box::new(ZygiskCheckState {
+                    results,
+                    module_ids,
+                })),
+            }
         } else if has_allow {
             // All decided, at least one allowed
             let attachments: Vec<Attachment> = adapter_data

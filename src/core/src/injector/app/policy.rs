@@ -166,11 +166,17 @@ pub enum PolicyDecision {
         data: Option<Vec<u8>>,
         attachments: Option<Vec<Attachment>>,
     },
-    MoreInfo(Option<Box<dyn Any + Send + Sync>>),
+    MoreInfo {
+        state: Option<Box<dyn Any + Send + Sync>>,
+    },
     Deny,
 }
 
 impl PolicyDecision {
+    pub fn more_info() -> Self {
+        PolicyDecision::MoreInfo { state: None }
+    }
+
     pub fn allow() -> Self {
         PolicyDecision::Allow {
             data: None,
@@ -201,7 +207,7 @@ impl Debug for PolicyDecision {
                 .field("attachments", &attachments.as_ref().map(|a| a.len()))
                 .field("data", &data.as_ref().map(|d| d.len()))
                 .finish(),
-            PolicyDecision::MoreInfo(_) => fmt.write_str("MoreInfo(...)"),
+            PolicyDecision::MoreInfo { .. } => fmt.write_str("MoreInfo(...)"),
             PolicyDecision::Deny => fmt.write_str("Deny"),
         }
     }
@@ -275,7 +281,7 @@ impl PolicyProviderManager {
         let decisions = future::join_all(futures).await;
         let more_info = decisions
             .iter()
-            .any(|it| matches!(it, PolicyDecision::MoreInfo(_)));
+            .any(|it| matches!(it, PolicyDecision::MoreInfo { .. }));
 
         PolicyDecisions {
             decisions,
@@ -297,7 +303,7 @@ impl PolicyProviderManager {
             .into_iter()
             .enumerate()
             .map(|(i, it)| match it {
-                PolicyDecision::MoreInfo(state) => {
+                PolicyDecision::MoreInfo { state } => {
                     recheck_items.push((i, state));
                     PolicyDecision::Deny
                 }
@@ -321,7 +327,7 @@ impl PolicyProviderManager {
 
         // Apply new decisions; MoreInfo in slow path is not allowed.
         for (index, new_decision) in new_decisions {
-            if matches!(new_decision, PolicyDecision::MoreInfo(_)) {
+            if matches!(new_decision, PolicyDecision::MoreInfo { .. }) {
                 warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
                 result.decisions[index] = PolicyDecision::Deny;
             } else {
