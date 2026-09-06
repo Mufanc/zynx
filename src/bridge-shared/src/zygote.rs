@@ -159,6 +159,7 @@ pub enum ProviderType {
     Debugger,
     LiteLoader,
     Zygisk,
+    Zynx,
 }
 
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]

@@ -1,8 +1,10 @@
 mod debugger;
 mod liteloader;
+mod zynx;
 
 use crate::injector::debugger::DebuggerProviderHandler;
 use crate::injector::liteloader::LiteLoaderProviderHandler;
+use crate::injector::zynx::ZynxProviderHandler;
 use anyhow::Result;
 use log::error;
 use std::collections::HashMap;
@@ -29,6 +31,7 @@ impl ProviderHandlerRegistry {
 
         instance.register(DebuggerProviderHandler);
         instance.register(LiteLoaderProviderHandler);
+        instance.register(ZynxProviderHandler);
 
         #[cfg(feature = "zygisk")]
         instance.register(ZygiskProviderHandler);

@@ -2357,6 +2357,7 @@ dependencies = [
  "prost-build",
  "r3solvr",
  "regex-lite",
+ "rustix",
  "scopeguard",
  "serde",
  "strum",

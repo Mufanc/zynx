@@ -10,6 +10,7 @@ use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
 #[cfg(feature = "zygisk")]
 use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
+use crate::injector::app::policy::zynx::ZynxPolicyProvider;
 use anyhow::Result;
 use async_trait::async_trait;
 use futures::future;
@@ -247,6 +248,8 @@ impl PolicyProviderManager {
         if config.enable_liteloader {
             instance.register::<LiteLoaderPolicyProvider>().await?;
         }
+
+        instance.register::<ZynxPolicyProvider>().await?;
 
         #[cfg(feature = "zygisk")]
         if config.enable_zygisk {
