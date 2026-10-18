@@ -26,10 +26,13 @@ impl SpecializeCommonConfig {
 
         let (sym, ver) = SpecializeVersion::iter()
             .find_map(|ver| {
+                let name = ver.as_ref();
+
                 resolver
-                    .lookup_symbol(Query::new(ver.as_ref()).with_debugdata(true))
-                    .map(|sym| (sym, ver))
+                    .lookup_symbol(Query::new(name).with_prefix(true).with_debugdata(true))
                     .ok()
+                    .filter(|sym| matches_symbol_name(&sym.name, name))
+                    .map(|sym| (sym, ver))
             })
             .context("no known SpecializeCommon symbol found in libandroid_runtime.so")?;
 
@@ -45,4 +48,36 @@ impl SpecializeCommonConfig {
     }
 }
 
+fn matches_symbol_name(symbol: &str, expected: &str) -> bool {
+    let Some((base, hash)) = symbol.rsplit_once(".__uniq.") else {
+        return symbol == expected;
+    };
+
+    base == expected && !hash.is_empty() && hash.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 pub static SC_BRK: [u8; 4] = [0x00, 0x00, 0x20, 0xd4]; // brk #0
+
+#[cfg(test)]
+mod tests {
+    use super::matches_symbol_name;
+
+    #[test]
+    fn unique_symbol_suffix_is_strict() {
+        let base = "_ZN12_GLOBAL__N_116SpecializeCommon";
+
+        assert!(matches_symbol_name(base, base));
+        assert!(matches_symbol_name(
+            "_ZN12_GLOBAL__N_116SpecializeCommon.__uniq.138421450522488007553410587292931815916",
+            base
+        ));
+        assert!(!matches_symbol_name(
+            "_ZN12_GLOBAL__N_116SpecializeCommon.__uniq.",
+            base
+        ));
+        assert!(!matches_symbol_name(
+            "_ZN12_GLOBAL__N_116SpecializeCommon.__uniq.clone",
+            base
+        ));
+    }
+}
