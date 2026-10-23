@@ -178,7 +178,11 @@ impl PolicyProvider for ZynxPolicyProvider {
     }
 
     async fn init(&self) -> Result<()> {
-        let module_dir = env::var_os("MODDIR").context("MODDIR is not set")?;
+        let Some(module_dir) = env::var_os("MODDIR") else {
+            info!("MODDIR is not set, skip Zynx module scan");
+            return Ok(());
+        };
+
         let modules_dir = Path::new(&module_dir)
             .parent()
             .context("MODDIR has no parent directory")?;
@@ -308,6 +312,26 @@ mod tests {
     use nix::unistd::{Gid, Uid};
     use std::fs::File;
     use std::sync::Arc;
+
+    #[tokio::test]
+    async fn skips_module_scan_without_moddir() {
+        if env::var_os("MODDIR").is_some() {
+            return;
+        }
+
+        let provider = ZynxPolicyProvider::default();
+        provider.init().await.unwrap();
+        assert!(provider.modules.get().is_none());
+
+        let args = EmbryoCheckArgs::new_fast(
+            Uid::from_raw(10_123),
+            Gid::from_raw(10_123),
+            false,
+            false,
+            None,
+        );
+        assert!(matches!(provider.check(&args).await, PolicyDecision::Deny));
+    }
 
     #[test]
     fn parses_and_validates_manifest() {
