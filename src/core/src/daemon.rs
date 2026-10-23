@@ -114,6 +114,7 @@ pub fn wait_for_bpfloader_if_needed() -> Result<()> {
 
     let connection = socket::accept4(listener.as_raw_fd(), SockFlag::SOCK_CLOEXEC)?;
     let connection = unsafe { OwnedFd::from_raw_fd(connection) };
+
     // Keep the wrapper blocked until Zynx finishes initializing.
     *BPFLOADER_CONNECTION.lock().unwrap() = Some(connection);
 

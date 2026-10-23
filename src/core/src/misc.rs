@@ -37,6 +37,7 @@ pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<OwnedFd> {
     let fd = MemfdOptions::default().allow_sealing(true).create(name)?;
 
     let mut file = fd.as_file();
+
     file.write_all(data)?;
     file.sync_data()?;
     file.seek(SeekFrom::Start(0))?;
@@ -50,9 +51,10 @@ pub fn create_sealed_memfd(name: &str, data: &[u8]) -> Result<OwnedFd> {
 
     let path = format!("/proc/self/fd/{}", fd.as_file().as_raw_fd());
     let readonly: OwnedFd = File::open(path)?.into();
-    drop(fd);
 
+    drop(fd);
     fsetcon(&readonly, SYSTEM_LIB_FILE_CONTEXT)?;
+
     Ok(readonly)
 }
 

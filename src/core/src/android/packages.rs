@@ -150,6 +150,7 @@ impl PackageInfoService {
                 let count: usize = new_map.values().map(|v| v.len()).sum();
 
                 let mut data = data.write();
+
                 *data = new_map;
                 drop(data);
 

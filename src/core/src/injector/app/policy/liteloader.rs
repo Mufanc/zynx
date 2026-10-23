@@ -224,6 +224,7 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
                     Attachment::with_both(entry.fd.clone(), data)
                 })
                 .collect();
+
             return PolicyDecision::allow_with_attachments(attachments);
         }
 

@@ -56,6 +56,7 @@ pub async fn run(config: ZynxConfigs) -> Result<()> {
     };
 
     let context = Arc::new(ZynxContext::new(&config).await?);
+
     Monitor::init(monitor_config)?;
     daemon::notify_started();
 
@@ -76,6 +77,7 @@ pub async fn attach_zygote(pid: i32, config: ZynxConfigs) -> Result<()> {
     // verify that the process is actually zygote64
     let proc = Process::new(pid.as_raw())?;
     let cmdline = proc.cmdline()?;
+
     if !cmdline.iter().any(|arg| arg == ZYGOTE_NAME) {
         bail!("process {pid} is not zygote64 (cmdline = {cmdline:?})");
     }
@@ -86,6 +88,7 @@ pub async fn attach_zygote(pid: i32, config: ZynxConfigs) -> Result<()> {
     };
 
     let context = Arc::new(ZynxContext::new(&config).await?);
+
     Monitor::init(monitor_config)?;
 
     ZygoteTracer::create_attach(context.clone(), pid)?;

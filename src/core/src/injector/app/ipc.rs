@@ -22,6 +22,7 @@ pub fn bundles_to_payload(bundles: &[ProviderBundle]) -> (IpcPayload, Vec<Borrow
                     if let Some(ref fd) = attachment.fd {
                         fds.push(fd.as_fd());
                     }
+
                     AttachmentWire {
                         has_fd: attachment.fd.is_some(),
                         data: attachment.data.clone(),

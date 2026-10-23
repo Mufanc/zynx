@@ -185,6 +185,7 @@ impl EmbryoInjector {
                 self.read_jstring(args.env, args.managed_nice_name)?,
                 self.read_jstring(args.env, args.managed_app_data_dir)?,
             );
+
             manager.recheck_slow(&slow_args, &mut result).await;
         }
 

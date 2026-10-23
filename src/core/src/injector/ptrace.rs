@@ -116,6 +116,7 @@ impl RemoteProcess {
             .context("ptrace::seize")?;
         debug!("attached to {self}");
         self.attached.store(true, Ordering::Release);
+
         Ok(())
     }
 

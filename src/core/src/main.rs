@@ -45,6 +45,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let config = ZynxConfigs::new(&cli.configs)?;
+
     if attach_pid.is_none() {
         // Attach mode must stay foreground; only the normal injector path may be a daemon child.
         daemon::daemonize_if_needed()?;
@@ -56,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         .build()?
         .block_on(async {
             inject_panic_handler();
+
             if let Some(pid) = attach_pid {
                 injector::attach_zygote(pid, config).await
             } else {

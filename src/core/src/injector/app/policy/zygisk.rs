@@ -124,9 +124,13 @@ impl AdapterConnection {
                     None,
                 )?;
                 let addr = UnixAddr::new_abstract(&name)?;
+
                 socket::connect(fd.as_raw_fd(), &addr)?;
+
                 let std_stream = std::os::unix::net::UnixStream::from(fd);
+
                 std_stream.set_nonblocking(true)?;
+
                 let stream = UnixStream::from_std(std_stream)?;
                 Ok(AdapterConnection::Socket(stream))
             }
@@ -187,6 +191,7 @@ impl AdapterConnection {
         self.recv_data(&mut len_buf).await?;
 
         let len = u32::from_le_bytes(len_buf) as usize;
+
         if len > MAX_MESSAGE_SIZE {
             bail!("message too large: {len} bytes (max {MAX_MESSAGE_SIZE})");
         }
@@ -238,6 +243,7 @@ struct ZygiskCheckState {
 
 fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
     let modules_dir = Path::new(MODULES_DIR);
+
     if !modules_dir.exists() {
         return Ok(Vec::new());
     }
@@ -246,6 +252,7 @@ fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
 
     for entry in modules_dir.read_dir()?.flatten() {
         let module_dir = entry.path();
+
         if !module_dir.is_dir() {
             continue;
         }
@@ -265,6 +272,7 @@ fn scan_modules() -> Result<Vec<ZygiskAdapter>> {
         }
 
         let config_path = module_dir.join("zynx-configs.toml");
+
         if !config_path.exists() {
             continue;
         }
@@ -435,9 +443,11 @@ impl PolicyProvider for ZygiskPolicyProvider {
         // Clone adapter data and release lock before any await
         let adapter_data: Vec<_> = {
             let adapters = self.adapters.read();
+
             if adapters.is_empty() {
                 return PolicyDecision::Deny;
             }
+
             adapters
                 .iter()
                 .map(|a| (a.filter.clone(), a.module_id.clone()))
@@ -467,6 +477,7 @@ impl PolicyProvider for ZygiskPolicyProvider {
         if has_pending {
             // Need recheck for some adapters, store module_ids for recheck
             let module_ids: Vec<_> = adapter_data.into_iter().map(|(_, id)| id).collect();
+
             PolicyDecision::MoreInfo {
                 state: Some(Box::new(ZygiskCheckState {
                     results,
@@ -482,9 +493,11 @@ impl PolicyProvider for ZygiskPolicyProvider {
                         module_name: module_id.clone(),
                     };
                     let data = wincode::serialize(&params).unwrap_or_default();
+
                     Attachment::with_data(data)
                 })
                 .collect();
+
             PolicyDecision::allow_with_attachments(attachments)
         } else {
             // All decided, none allowed
@@ -521,6 +534,7 @@ impl PolicyProvider for ZygiskPolicyProvider {
                 AdapterCheckResult::Pending(conn) => {
                     let module_id = &check_state.module_ids[i];
                     let final_result = Self::recheck_adapter(*conn, module_id, &slow_args).await;
+
                     if final_result == CheckResult::Allow {
                         has_allow = true;
                     }

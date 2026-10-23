@@ -5,6 +5,7 @@ macro_rules! debug_on {
         {
             $crate::props::prop_on(concat!("debug.zynx.", $key))
         }
+
         #[cfg(not(debug_assertions))]
         {
             false

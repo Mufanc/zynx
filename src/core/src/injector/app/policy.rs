@@ -319,6 +319,7 @@ impl PolicyProviderManager {
                     Some(s) => self.providers[i].recheck(args, s).await,
                     None => self.providers[i].check(args).await,
                 };
+
                 (i, decision)
             })
             .collect();
@@ -349,9 +350,11 @@ impl PolicyProviderManager {
                     attachments: Vec::new(),
                     data: None,
                 });
+
                 if let Some(attachments) = attachments {
                     entry.attachments.extend(attachments.iter().cloned());
                 }
+
                 if let Some(data) = data {
                     entry.data = Some(data.clone());
                 }

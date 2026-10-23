@@ -231,9 +231,11 @@ impl ZynxPolicyProvider {
             if !module_dir.is_dir() || module_dir.join("disable").exists() {
                 continue;
             }
+
             let Some(module_id) = module_dir.file_name().and_then(|name| name.to_str()) else {
                 continue;
             };
+
             if !module_dir.join(MANIFEST_FILE).exists() {
                 continue;
             }

@@ -53,6 +53,7 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
         }
 
         let handler = ProviderHandlerRegistry::new();
+
         handler.dispatch_pre(&mut args_struct, &mut groups);
 
         G_CONTEXT.with(|cell| {
@@ -74,6 +75,7 @@ fn on_specialize_post() -> Result<()> {
             ctx.handler.dispatch_post(&ctx.args, &mut ctx.groups);
         }
     });
+
     Ok(())
 }
 

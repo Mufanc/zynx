@@ -170,9 +170,11 @@ impl Monitor {
 
     pub fn init(config: Config) -> Result<()> {
         let monitor = Self::new(config)?;
+
         INSTANCE
             .set(monitor)
             .map_err(|_| anyhow!("Monitor already initialized"))?;
+
         Ok(())
     }
 

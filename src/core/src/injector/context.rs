@@ -16,6 +16,7 @@ impl ZynxContext {
     pub async fn new(config: &ZynxConfigs) -> anyhow::Result<Self> {
         let bridge = Bridge::new(config.bridge_file.as_deref())?;
         let specialize = SpecializeCommonConfig::resolve()?;
+
         info!("SpecializeCommon config: {specialize:?}");
 
         Ok(Self {

@@ -30,6 +30,7 @@ impl ZygoteMaps {
 
     pub fn find_vma(&self, addr: usize) -> Option<&MemoryMap> {
         let addr = addr as u64;
+
         self.0
             .iter()
             .find(|vma| vma.address.0 <= addr && vma.address.1 > addr)
@@ -107,6 +108,7 @@ impl ZygoteTracer {
         info!("SpecializeCommon vma: {sc_vma:?}, addr: {sc_addr}");
 
         let mut tracer = ZYGOTE_TRACER.write();
+
         tracer.replace(Self {
             context,
             specialize_fn: sc_addr,
@@ -149,6 +151,7 @@ impl ZygoteTracer {
         info!("SpecializeCommon vma: {sc_vma:?}, addr: {sc_addr}");
 
         let mut tracer = ZYGOTE_TRACER.write();
+
         tracer.replace(Self {
             context,
             specialize_fn: sc_addr,
@@ -175,10 +178,13 @@ impl ZygoteTracer {
 
         task::spawn_blocking(move || {
             let start = Instant::now();
+
             EmbryoInjector::new(context, pid, maps, specialize_fn)
                 .start()
                 .log_if_error();
+
             let elapsed = start.elapsed();
+
             debug!("embryo {pid} check/injection completed in {elapsed:.2?}");
         });
 

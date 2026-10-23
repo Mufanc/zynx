@@ -9,10 +9,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 const SELINUX_XATTR: &CStr = c"security.selinux";
+
 pub fn getcon<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = CString::new(path.as_ref().as_os_str().as_bytes())?;
     let mut buffer = [0u8; 128];
-
     let res = unsafe {
         libc::getxattr(
             path.as_ptr(),
@@ -79,6 +79,7 @@ pub fn fsetcon<F: AsFd>(file: F, context: &str) -> Result<()> {
         let after = fgetcon(&file)
             .map(Cow::Owned)
             .unwrap_or(Cow::Borrowed("(unknown)"));
+
         debug!(
             "fsetcon: fd = {}, {} -> {}",
             file.as_fd().as_raw_fd(),

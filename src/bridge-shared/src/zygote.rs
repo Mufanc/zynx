@@ -219,6 +219,7 @@ impl IpcPayload {
         let mut buffer = [0u8; size_of::<[usize; 2]>()];
 
         let received = conn.recv(&mut buffer)?;
+
         if received != size_of::<[usize; 2]>() {
             bail!(
                 "incomplete IPC header: expected {} bytes, got {received}",

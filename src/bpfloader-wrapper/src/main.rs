@@ -74,6 +74,7 @@ fn mount_wrapper() -> Result<(), Box<dyn std::error::Error>> {
     })();
 
     let unlink_result = fs::unlink(WRAPPER_PATH);
+
     attach_result?;
     unlink_result?;
 
@@ -108,6 +109,7 @@ fn run_bpfloader() -> Result<(), Box<dyn std::error::Error>> {
     let status = Command::new(BPFLOADER_PATH)
         .args(env::args_os().skip(1))
         .status()?;
+
     if !status.success() {
         return Err(io::Error::other(format!("bpfloader failed: {status}")).into());
     }

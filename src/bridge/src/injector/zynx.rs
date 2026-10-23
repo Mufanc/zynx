@@ -27,6 +27,7 @@ impl ProviderHandler for ZynxProviderHandler {
             };
 
             let mut library = NativeLibrary::new(params.module_name, fd);
+
             library.open().log_if_error();
         }
 

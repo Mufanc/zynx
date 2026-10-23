@@ -44,6 +44,7 @@ pub fn get(name: &str) -> Option<Property> {
     }
 
     let value = CStr::from_bytes_until_nul(&buffer).ok()?;
+
     Some(Property(value.to_string_lossy().into_owned()))
 }
 

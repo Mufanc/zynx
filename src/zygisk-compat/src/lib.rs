@@ -67,6 +67,7 @@ impl ProviderHandler for ZygiskProviderHandler {
     fn on_specialize_post(args: &SpecializeArgs, _bundle: &mut ProviderBundle) -> Result<()> {
         G_MODULES.with(|cell| {
             let modules = cell.take();
+
             modules
                 .iter()
                 .for_each(|module| module.call_specialize_post(args));

@@ -127,6 +127,7 @@ impl NativeLibrary {
                 system::dlclose(handle as _);
             }
         }
+
         self.auto_close = false;
     }
 
