@@ -456,7 +456,7 @@ pub fn tracepoint__sched__sched_process_exit(ctx: TracePointContext) -> u32 {
                 warn!(&ctx, "failed to emit zygote crash message");
             }
 
-            if ZYGOTE_INFO.set(0, 0, BPF_ANY as _).is_err() {
+            if ZYGOTE_INFO.set(0, &0, BPF_ANY as _).is_err() {
                 warn!(&ctx, "failed to clear zygote pid")
             }
         }
