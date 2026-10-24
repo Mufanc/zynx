@@ -39,7 +39,9 @@ jobs:
         uses: extractions/setup-just@v4
 
       - name: Setup Protoc
-        run: sudo apt-get install -y protobuf-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
