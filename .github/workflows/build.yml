@@ -54,6 +54,8 @@ jobs:
         uses: cargo-bins/cargo-binstall@v1.22.0
 
       - name: Install bpf-linker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: cargo binstall bpf-linker --no-confirm
 
       - name: Build
