@@ -1,10 +1,13 @@
 use anyhow::{Context, Result, bail};
 use daemonize::Daemonize;
 use log::info;
+use nix::errno::Errno;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
 use nix::sys::socket;
+use nix::sys::socket::sockopt::ReceiveTimeout;
 use nix::sys::socket::{AddressFamily, Backlog, MsgFlags, SockFlag, SockType, UnixAddr};
+use nix::sys::time::TimeVal;
 use nix::unistd::Pid;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
@@ -22,6 +25,7 @@ use zynx_misc::ext::ResultExt;
 const ENV_LAUNCHER_PID: &str = "ZYNX_LAUNCHER_PID";
 const ENV_WAIT_BPFLOADER: &str = "ZYNX_WAIT_BPFLOADER";
 const ZYNX_SOCKET_NAME: &[u8] = b"zynx-bpfloader-sock";
+const BPFLOADER_ACCEPT_TIMEOUT_SECS: i64 = 30;
 
 static NOTIFY_ONCE: Once = Once::new();
 static BPFLOADER_CONNECTION: Mutex<Option<OwnedFd>> = Mutex::new(None);
@@ -107,12 +111,22 @@ pub fn wait_for_bpfloader_if_needed() -> Result<()> {
     )?;
     let address = UnixAddr::new_abstract(ZYNX_SOCKET_NAME)?;
 
+    socket::setsockopt(
+        &listener,
+        ReceiveTimeout,
+        &TimeVal::new(BPFLOADER_ACCEPT_TIMEOUT_SECS, 0),
+    )?;
     socket::bind(listener.as_raw_fd(), &address)?;
     socket::listen(&listener, Backlog::new(1)?)?;
     // The boot script can mount the wrapper once the listener cannot miss its connection.
     notify_launcher_if_needed();
 
-    let connection = socket::accept4(listener.as_raw_fd(), SockFlag::SOCK_CLOEXEC)?;
+    let connection = match socket::accept4(listener.as_raw_fd(), SockFlag::SOCK_CLOEXEC) {
+        Err(Errno::EAGAIN) => {
+            bail!("timed out after {BPFLOADER_ACCEPT_TIMEOUT_SECS}s waiting for bpfloader wrapper")
+        }
+        result => result.context("failed to accept bpfloader wrapper connection")?,
+    };
     let connection = unsafe { OwnedFd::from_raw_fd(connection) };
 
     // Keep the wrapper blocked until Zynx finishes initializing.
