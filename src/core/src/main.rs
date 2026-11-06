@@ -1,7 +1,11 @@
+#[cfg(all(feature = "standalone", feature = "zygisk"))]
+compile_error!("features `standalone` and `zygisk` are mutually exclusive");
+
 mod android;
 mod binary;
 mod cli;
 mod config;
+#[cfg(not(feature = "standalone"))]
 mod daemon;
 mod injector;
 mod misc;
@@ -35,22 +39,18 @@ fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse_args();
 
-    let attach_pid = match cli.command {
-        Some(Command::Daemon { wait_bpfloader }) => {
-            // The child re-enters `main` without a subcommand; this process only waits for it.
+    #[cfg(not(feature = "standalone"))]
+    {
+        if let Some(Command::Daemon { wait_bpfloader }) = cli.command {
+            // The child re-enters main without a subcommand.
             return daemon::launch_daemon(wait_bpfloader);
         }
-        Some(Command::AttachZygote { pid }) => Some(pid),
-        None => None,
-    };
 
-    let config = ZynxConfigs::new(&cli.configs)?;
-
-    if attach_pid.is_none() {
-        // Attach mode must stay foreground; only the normal injector path may be a daemon child.
         daemon::daemonize_if_needed()?;
         daemon::wait_for_bpfloader_if_needed()?;
     }
+
+    let config = ZynxConfigs::new(&cli.configs);
 
     Builder::new_multi_thread()
         .enable_all()
@@ -58,11 +58,12 @@ fn main() -> anyhow::Result<()> {
         .block_on(async {
             inject_panic_handler();
 
-            if let Some(pid) = attach_pid {
-                injector::attach_zygote(pid, config).await
-            } else {
-                injector::run(config).await
+            #[cfg(feature = "standalone")]
+            if let Some(Command::AttachZygote { pid }) = cli.command {
+                return injector::attach_zygote(pid, config).await;
             }
+
+            injector::run(config).await
         })?;
 
     Ok(())

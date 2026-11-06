@@ -5,6 +5,7 @@ mod zygisk;
 mod zynx;
 
 use crate::android::packages::PackageInfo;
+use crate::cli::FeatureFlags;
 use crate::config::ZynxConfigs;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
@@ -247,18 +248,18 @@ impl PolicyProviderManager {
     pub async fn new(config: &ZynxConfigs) -> Result<Self> {
         let mut instance = Self::default();
 
-        if config.enable_debugger {
+        if config.features.contains(FeatureFlags::DEBUGGER) {
             instance.register::<DebuggerPolicyProvider>().await?;
         }
 
-        if config.enable_liteloader {
+        if config.features.contains(FeatureFlags::LITELOADER) {
             instance.register::<LiteLoaderPolicyProvider>().await?;
         }
 
         instance.register::<ZynxPolicyProvider>().await?;
 
         #[cfg(feature = "zygisk")]
-        if config.enable_zygisk {
+        if config.features.contains(FeatureFlags::ZYGISK) {
             instance.register::<ZygiskPolicyProvider>().await?;
         }
 

@@ -18,18 +18,13 @@ jobs:
     strategy:
       matrix:
         profile: [debug, release]
-        zygisk:
-          - name: zygisk
+        mode:
+          - name: standalone
+            feature: "zynx/standalone"
+          - name: module
+            feature: ""
+          - name: module-zygisk
             feature: "zynx/zygisk"
-          - name: no-zygisk
-            feature: ""
-        bridge:
-          - name: embedded-bridge
-            feature: "zynx/embedded-bridge"
-            split: false
-          - name: split-bridge
-            feature: ""
-            split: true
 
     steps:
       - name: Checkout
@@ -61,30 +56,23 @@ jobs:
         run: cargo binstall bpf-linker --no-confirm
 
       - name: Build
-        shell: bash
-        run: |
-          features=()
-          for feature in '${{ matrix.zygisk.feature }}' '${{ matrix.bridge.feature }}'; do
-            [[ -n "$feature" ]] && features+=("$feature")
-          done
-          feature_list="$(IFS=,; echo "${features[*]}")"
-          just build ${{ matrix.profile }} "$feature_list" false
+        run: just build ${{ matrix.profile }} "${{ matrix.mode.feature }}" false
 
-      - name: Upload embedded-bridge artifact
-        if: ${{ !matrix.bridge.split }}
+      - name: Upload standalone artifact
+        if: ${{ matrix.mode.name == 'standalone' }}
         uses: actions/upload-artifact@v7
         with:
-          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk.name }}-${{ matrix.bridge.name }}
+          name: zynx-${{ matrix.profile }}-${{ matrix.mode.name }}
           path: |
             target/aarch64-linux-android/${{ matrix.profile }}/zynx
             target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp
             target/aarch64-linux-android/${{ matrix.profile }}/libzynx_bridge.so.dwp
 
-      - name: Upload split-bridge artifact
-        if: ${{ matrix.bridge.split }}
+      - name: Upload module binaries
+        if: ${{ matrix.mode.name != 'standalone' }}
         uses: actions/upload-artifact@v7
         with:
-          name: zynx-${{ matrix.profile }}-${{ matrix.zygisk.name }}-${{ matrix.bridge.name }}
+          name: zynx-${{ matrix.profile }}-${{ matrix.mode.name }}
           path: |
             target/aarch64-linux-android/${{ matrix.profile }}/zynx
             target/aarch64-linux-android/${{ matrix.profile }}/zynx.dwp

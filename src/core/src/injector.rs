@@ -1,13 +1,16 @@
 use crate::config::ZynxConfigs;
+#[cfg(not(feature = "standalone"))]
+use crate::daemon;
 use crate::injector::context::ZynxContext;
-use crate::monitor::{Message, Monitor};
-use crate::{daemon, monitor};
+use crate::monitor::{self, Message, Monitor};
 use anyhow::{Result, bail};
 use app::zygote::ZYGOTE_NAME;
 use app::zygote::ZygoteTracer;
 use log::{error, info};
 use nix::unistd;
-use nix::unistd::{Pid, SysconfVar};
+#[cfg(feature = "standalone")]
+use nix::unistd::Pid;
+use nix::unistd::SysconfVar;
 use once_cell::sync::Lazy;
 use procfs::process::Process;
 use std::sync::Arc;
@@ -58,6 +61,7 @@ pub async fn run(config: ZynxConfigs) -> Result<()> {
     let context = Arc::new(ZynxContext::new(&config).await?);
 
     Monitor::init(monitor_config)?;
+    #[cfg(not(feature = "standalone"))]
     daemon::notify_started();
 
     let monitor = Monitor::instance();
@@ -71,6 +75,7 @@ pub async fn run(config: ZynxConfigs) -> Result<()> {
     bail!("monitor exited unexpectedly");
 }
 
+#[cfg(feature = "standalone")]
 pub async fn attach_zygote(pid: i32, config: ZynxConfigs) -> Result<()> {
     let pid = Pid::from_raw(pid);
 

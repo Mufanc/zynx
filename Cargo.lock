@@ -2326,6 +2326,7 @@ dependencies = [
  "aya",
  "aya-build",
  "aya-log",
+ "bitflags",
  "clap",
  "cpp_demangle",
  "daemonize",

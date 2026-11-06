@@ -103,7 +103,7 @@ impl Monitor {
 
             buffer[..len].copy_from_slice(&path.as_bytes()[..len]);
 
-            target_paths.insert(buffer, 0, 0)?;
+            target_paths.insert(&buffer, &0, 0)?;
         }
 
         for name in &config.target_names {
@@ -112,7 +112,7 @@ impl Monitor {
 
             buffer[..len].copy_from_slice(&name.as_bytes()[..len]);
 
-            target_names.insert(buffer, 0, 0)?;
+            target_names.insert(&buffer, &0, 0)?;
         }
 
         for (name, program) in ebpf.programs_mut() {
@@ -164,7 +164,7 @@ impl Monitor {
 
     pub fn attach_zygote(&self, pid: i32) -> Result<()> {
         let mut zygote_info = self.zygote_info.lock();
-        zygote_info.set(0, pid, 0 /* BPF_ANY */)?;
+        zygote_info.set(0, &pid, 0 /* BPF_ANY */)?;
         Ok(())
     }
 

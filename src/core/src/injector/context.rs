@@ -14,7 +14,10 @@ pub struct ZynxContext {
 
 impl ZynxContext {
     pub async fn new(config: &ZynxConfigs) -> anyhow::Result<Self> {
-        let bridge = Bridge::new(config.bridge_file.as_deref())?;
+        #[cfg(feature = "standalone")]
+        let bridge = Bridge::new()?;
+        #[cfg(not(feature = "standalone"))]
+        let bridge = Bridge::new(&config.bridge_file)?;
         let specialize = SpecializeCommonConfig::resolve()?;
 
         info!("SpecializeCommon config: {specialize:?}");

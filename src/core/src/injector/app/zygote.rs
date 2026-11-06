@@ -118,6 +118,7 @@ impl ZygoteTracer {
         Ok(())
     }
 
+    #[cfg(feature = "standalone")]
     pub fn create_attach(context: Arc<ZynxContext>, pid: Pid) -> Result<()> {
         info!("attaching to running zygote process: {pid}");
 

@@ -38,7 +38,7 @@ deploy variant="debug": (build variant)
 run-emulator variant="debug": (deploy variant)
     adb shell "(su 0 killall zynx || true) && sleep 1"
     adb shell su 0 setenforce 0
-    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx --cfg-enable-zygisk --cfg-enable-debugger --cfg-enable-liteloader"
+    adb shell "RUST_LOG=debug RUST_LOG_STYLE=always RUST_BACKTRACE=1 su 0 /data/local/tmp/zynx --features debugger:liteloader"
 
 setup-ondk:
     @python3 scripts/setup-ondk.py --version {{ONDK_VERSION}}
