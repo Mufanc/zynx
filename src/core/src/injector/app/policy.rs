@@ -1,8 +1,10 @@
 mod debugger;
+#[cfg(not(feature = "standalone"))]
 mod filter;
 mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
+#[cfg(not(feature = "standalone"))]
 mod zynx;
 
 use crate::android::packages::PackageInfo;
@@ -10,6 +12,7 @@ use crate::cli::FeatureFlags;
 use crate::config::ZynxConfigs;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
+#[cfg(not(feature = "standalone"))]
 use crate::injector::app::policy::zynx::ZynxPolicyProvider;
 use async_trait::async_trait;
 use futures::future;
@@ -21,6 +24,7 @@ use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use zynx_bridge_shared::zygote::ProviderType;
 
+#[cfg(not(feature = "standalone"))]
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/zynx_policy.rs"));
 }
@@ -137,20 +141,23 @@ impl PolicyProviderManager {
             instance.register::<LiteLoaderPolicyProvider>().await?;
         }
 
-        #[cfg(feature = "zygisk")]
-        let zygisk_enabled = config.features.contains(FeatureFlags::ZYGISK);
-        #[cfg(not(feature = "zygisk"))]
-        let zygisk_enabled = false;
-        let zynx = ZynxPolicyProvider::new(zygisk_enabled);
+        #[cfg(not(feature = "standalone"))]
+        {
+            #[cfg(feature = "zygisk")]
+            let zygisk_enabled = config.features.contains(FeatureFlags::ZYGISK);
+            #[cfg(not(feature = "zygisk"))]
+            let zygisk_enabled = false;
+            let zynx = ZynxPolicyProvider::new(zygisk_enabled);
 
-        zynx.init().await?;
+            zynx.init().await?;
 
-        #[cfg(feature = "zygisk")]
-        if config.features.contains(FeatureFlags::ZYGISK) {
-            instance.providers.push(Box::new(zynx.zygisk_provider()));
+            #[cfg(feature = "zygisk")]
+            if config.features.contains(FeatureFlags::ZYGISK) {
+                instance.providers.push(Box::new(zynx.zygisk_provider()));
+            }
+
+            instance.providers.push(Box::new(zynx));
         }
-
-        instance.providers.push(Box::new(zynx));
 
         Ok(instance)
     }
