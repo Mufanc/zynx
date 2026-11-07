@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+wincode = { workspace = true }
 zynx-bridge-shared = { path = "../bridge-shared" }
 
 [lints]

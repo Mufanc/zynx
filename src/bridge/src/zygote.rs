@@ -1,20 +1,18 @@
 use crate::init_logger;
-use crate::injector::ProviderHandlerRegistry;
+use crate::injector::ActionExecutor;
 use anyhow::Result;
 use log::{debug, info};
 use nix::libc::c_long;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
-use zynx_bridge_api::zygote::{Attachment, ProviderBundle};
-use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, ProviderType, SpecializeArgs};
+use zynx_bridge_api::action::Action;
+use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, SpecializeArgs};
 use zynx_misc::ext::ResultExt;
 
 struct SpecializeContext {
     args: SpecializeArgs,
-    handler: ProviderHandlerRegistry,
-    groups: HashMap<ProviderType, ProviderBundle>,
+    executor: ActionExecutor,
 }
 
 thread_local! {
@@ -33,34 +31,22 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
             IpcPayload::recv_from(unsafe { OwnedFd::from_raw_fd(bridge_args.conn_fd) })?;
 
         let mut fds = fds.into_iter();
-        let mut groups: HashMap<ProviderType, ProviderBundle> = HashMap::new();
-
-        for wire in payload.providers {
-            let bundle = ProviderBundle {
-                ty: wire.ty,
-                attachments: wire
-                    .attachments
-                    .into_iter()
-                    .map(|aw| Attachment {
-                        fd: if aw.has_fd { fds.next() } else { None },
-                        data: aw.data,
-                    })
-                    .collect(),
+        let actions = payload
+            .actions
+            .into_iter()
+            .map(|wire| Action {
+                fd: if wire.has_fd { fds.next() } else { None },
                 data: wire.data,
-            };
+            })
+            .collect();
+        let mut executor = ActionExecutor::new(actions)?;
 
-            groups.insert(bundle.ty, bundle);
-        }
-
-        let handler = ProviderHandlerRegistry::new();
-
-        handler.dispatch_pre(&mut args_struct, &mut groups);
+        executor.specialize_pre(&mut args_struct);
 
         G_CONTEXT.with(|cell| {
             *cell.borrow_mut() = Some(SpecializeContext {
                 args: args_struct.clone(),
-                handler,
-                groups,
+                executor,
             });
         });
     }
@@ -71,8 +57,8 @@ fn on_specialize_pre(args: &mut [c_long], bridge_args: &BridgeArgs) -> Result<()
 
 fn on_specialize_post() -> Result<()> {
     G_CONTEXT.with(|cell| {
-        if let Some(mut ctx) = cell.borrow_mut().take() {
-            ctx.handler.dispatch_post(&ctx.args, &mut ctx.groups);
+        if let Some(ctx) = cell.borrow_mut().take() {
+            ctx.executor.specialize_post(&ctx.args);
         }
     });
 

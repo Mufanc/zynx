@@ -154,50 +154,46 @@ impl SpecializeArgs {
     }
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, SchemaRead, SchemaWrite)]
-pub enum ProviderType {
-    Debugger,
-    LiteLoader,
-    Zygisk,
-    Zynx,
-}
-
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
-pub struct AttachmentWire {
+pub struct ActionWire {
     pub has_fd: bool,
-    pub data: Option<Vec<u8>>,
-}
-
-#[derive(Debug, SchemaRead, SchemaWrite)]
-pub struct ProviderBundleWire {
-    pub ty: ProviderType,
-    pub attachments: Vec<AttachmentWire>,
-    pub data: Option<Vec<u8>>,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, SchemaRead, SchemaWrite)]
 pub struct IpcPayload {
-    pub providers: Vec<ProviderBundleWire>,
+    pub actions: Vec<ActionWire>,
 }
 
+const IPC_PROTOCOL_VERSION: usize = 1;
+const SCM_MAX_FD: usize = 253;
+const MAX_PAYLOAD_SIZE: usize = 1024 * 1024;
+
 impl IpcPayload {
+    fn validate(&self, fd_count: usize) -> Result<()> {
+        ensure!(
+            self.actions.iter().filter(|action| action.has_fd).count() == fd_count,
+            "IPC action FD count mismatch"
+        );
+        ensure!(
+            self.actions.iter().all(|action| !action.data.is_empty()),
+            "IPC action data must describe an operation"
+        );
+
+        Ok(())
+    }
+
     pub fn send_to<'a>(
         &self,
         conn_fd: OwnedFd,
         fds: impl IntoIterator<Item = BorrowedFd<'a>>,
     ) -> Result<()> {
-        let providers = self
-            .providers
-            .iter()
-            .by_ref()
-            .map(|seg| &seg.attachments)
-            .collect::<Vec<_>>();
-
-        debug!("sending providers: {providers:?}");
-
-        const SCM_MAX_FD: usize = 253;
+        debug!("sending actions: {:?}", self.actions);
 
         let raw_fds: Vec<RawFd> = fds.into_iter().map(|fd| fd.as_raw_fd()).collect();
+
+        self.validate(raw_fds.len())?;
+
         let data = wincode::serialize(self)?;
 
         ensure!(
@@ -206,9 +202,15 @@ impl IpcPayload {
             raw_fds.len()
         );
 
+        ensure!(data.len() <= MAX_PAYLOAD_SIZE, "IPC payload is too large");
+
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
 
-        conn.send(bytemuck::bytes_of(&[data.len(), raw_fds.len()]))?;
+        conn.send(bytemuck::bytes_of(&[
+            IPC_PROTOCOL_VERSION,
+            data.len(),
+            raw_fds.len(),
+        ]))?;
         conn.send_fds(&data, &raw_fds)?;
 
         Ok(())
@@ -216,42 +218,51 @@ impl IpcPayload {
 
     pub fn recv_from(conn_fd: OwnedFd) -> Result<(Self, Vec<OwnedFd>)> {
         let conn = unsafe { UnixSeqpacketConn::from_raw_fd(conn_fd.into_raw_fd()) };
-        let mut buffer = [0u8; size_of::<[usize; 2]>()];
+        let mut buffer = [0u8; size_of::<[usize; 3]>()];
 
         let received = conn.recv(&mut buffer)?;
 
-        if received != size_of::<[usize; 2]>() {
+        if received != size_of::<[usize; 3]>() {
             bail!(
                 "incomplete IPC header: expected {} bytes, got {received}",
-                size_of::<[usize; 2]>()
+                size_of::<[usize; 3]>()
             );
         }
 
-        let pair: &[usize; 2] = bytemuck::from_bytes(&buffer);
-        let (buffer_len, fds_len) = (pair[0], pair[1]);
+        let header: [usize; 3] = bytemuck::pod_read_unaligned(&buffer);
+        let (version, buffer_len, fds_len) = (header[0], header[1], header[2]);
+
+        ensure!(
+            version == IPC_PROTOCOL_VERSION,
+            "unsupported IPC protocol version: {version}"
+        );
+        ensure!(buffer_len <= MAX_PAYLOAD_SIZE, "IPC payload is too large");
+        ensure!(fds_len <= SCM_MAX_FD, "too many IPC FDs: {fds_len}");
 
         let mut buffer: Vec<_> = vec![0; buffer_len];
         let mut raw_fds: Vec<RawFd> = vec![0; fds_len];
 
         let (bytes_received, truncated, fds_received) = conn.recv_fds(&mut buffer, &mut raw_fds)?;
 
-        if truncated {
-            bail!("IPC payload was truncated");
-        }
-
-        if bytes_received != buffer_len {
-            bail!("incomplete IPC payload: expected {buffer_len} bytes, got {bytes_received}");
-        }
-
-        if fds_received != fds_len {
-            bail!("incomplete IPC fds: expected {fds_len} fds, got {fds_received}");
-        }
-
-        let payload: IpcPayload = wincode::deserialize(&buffer)?;
-        let fds = raw_fds
+        let fds: Vec<OwnedFd> = raw_fds
             .into_iter()
+            .take(fds_received)
             .map(|fd| unsafe { OwnedFd::from_raw_fd(fd) })
             .collect();
+
+        ensure!(!truncated, "IPC payload was truncated");
+        ensure!(
+            bytes_received == buffer_len,
+            "incomplete IPC payload: expected {buffer_len} bytes, got {bytes_received}"
+        );
+        ensure!(
+            fds_received == fds_len,
+            "incomplete IPC fds: expected {fds_len} fds, got {fds_received}"
+        );
+
+        let payload: IpcPayload = wincode::deserialize(&buffer)?;
+
+        payload.validate(fds.len())?;
 
         Ok((payload, fds))
     }
@@ -261,4 +272,54 @@ impl IpcPayload {
 pub struct BridgeArgs {
     pub conn_fd: c_int,
     pub specialize_version: SpecializeVersion,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nix::sys::socket::{self, AddressFamily, SockFlag, SockType};
+
+    fn pair() -> (OwnedFd, OwnedFd) {
+        socket::socketpair(
+            AddressFamily::Unix,
+            SockType::SeqPacket,
+            None,
+            SockFlag::SOCK_CLOEXEC,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn rejects_inconsistent_actions_before_sending() {
+        let (sender, _) = pair();
+        let payload = IpcPayload {
+            actions: vec![ActionWire {
+                has_fd: true,
+                data: vec![1],
+            }],
+        };
+        assert!(payload.send_to(sender, []).is_err());
+        let (sender, _) = pair();
+        let payload = IpcPayload {
+            actions: vec![ActionWire {
+                has_fd: false,
+                data: vec![],
+            }],
+        };
+        assert!(payload.send_to(sender, []).is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_versions_and_invalid_lengths() {
+        for header in [
+            [IPC_PROTOCOL_VERSION + 1, 0, 0],
+            [IPC_PROTOCOL_VERSION, MAX_PAYLOAD_SIZE + 1, 0],
+            [IPC_PROTOCOL_VERSION, 0, SCM_MAX_FD + 1],
+        ] {
+            let (sender, receiver) = pair();
+            let sender = unsafe { UnixSeqpacketConn::from_raw_fd(sender.into_raw_fd()) };
+            sender.send(bytemuck::bytes_of(&header)).unwrap();
+            assert!(IpcPayload::recv_from(receiver).is_err());
+        }
+    }
 }

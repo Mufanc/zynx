@@ -2061,6 +2061,7 @@ dependencies = [
  "toml",
  "wincode",
  "zynx-bridge",
+ "zynx-bridge-api",
  "zynx-bridge-shared",
  "zynx-ebpf",
  "zynx-ebpf-shared",
@@ -2094,6 +2095,7 @@ name = "zynx-bridge-api"
 version = "1.0.0"
 dependencies = [
  "anyhow",
+ "wincode",
  "zynx-bridge-shared",
 ]
 
@@ -2143,8 +2145,5 @@ dependencies = [
  "jni",
  "log",
  "nix",
- "wincode",
- "zynx-bridge-api",
  "zynx-bridge-shared",
- "zynx-misc",
 ]

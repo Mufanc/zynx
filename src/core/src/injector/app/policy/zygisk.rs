@@ -1,9 +1,8 @@
-use super::zynx::LoadedModule;
+use super::module::LoadedModule;
 use super::{PolicyDecision, PolicyProvider, ProcessInfo};
 use async_trait::async_trait;
 use log::warn;
 use std::sync::{Arc, OnceLock};
-use zynx_bridge_shared::zygote::ProviderType;
 
 pub(super) struct ZygiskPolicyProvider {
     modules: Arc<OnceLock<Vec<LoadedModule>>>,
@@ -17,28 +16,24 @@ impl ZygiskPolicyProvider {
 
 #[async_trait]
 impl PolicyProvider for ZygiskPolicyProvider {
-    fn provider_type(&self) -> ProviderType {
-        ProviderType::Zygisk
-    }
-
     async fn check(&self, process: &ProcessInfo) -> PolicyDecision {
         let Some(modules) = self.modules.get() else {
             return PolicyDecision::Deny;
         };
-        let mut attachments = Vec::new();
+        let mut actions = Vec::new();
 
         for module in modules {
             match module.check_zygisk(process).await {
-                Ok(Some(attachment)) => attachments.push(attachment),
+                Ok(Some(action)) => actions.push(action),
                 Ok(None) => {}
                 Err(error) => warn!("Zygisk filter check failed: {error:#}"),
             }
         }
 
-        if attachments.is_empty() {
+        if actions.is_empty() {
             PolicyDecision::Deny
         } else {
-            PolicyDecision::allow_with_attachments(attachments)
+            PolicyDecision::Allow(actions)
         }
     }
 }

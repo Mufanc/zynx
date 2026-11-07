@@ -1,4 +1,4 @@
-use crate::injector::app::policy::{Attachment, PolicyDecision, PolicyProvider, ProcessInfo};
+use crate::injector::app::policy::{Action, PolicyDecision, PolicyProvider, ProcessInfo};
 use crate::misc;
 use anyhow::Context;
 use async_trait::async_trait;
@@ -10,10 +10,7 @@ use std::io::Read;
 use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-#[cfg(feature = "zygisk")]
-use zynx_bridge_shared::policy::zygisk::ZygiskParams;
-use zynx_bridge_shared::policy::zynx::ZynxParams;
-use zynx_bridge_shared::zygote::ProviderType;
+use zynx_bridge_shared::action::ActionData;
 
 mod manifest;
 mod numeric_set;
@@ -28,11 +25,11 @@ pub(super) struct LoadedModule {
     libraries: HashMap<PathBuf, Arc<OwnedFd>>,
     data: Vec<u8>,
     #[cfg(feature = "zygisk")]
-    zygisk_attachment: Option<Attachment>,
+    zygisk_action: Option<Action>,
 }
 
 #[derive(Default)]
-pub(super) struct ZynxPolicyProvider {
+pub(super) struct ModulePolicyProvider {
     modules: Arc<OnceLock<Vec<LoadedModule>>>,
     zygisk_enabled: bool,
 }
@@ -78,26 +75,27 @@ impl LoadedModule {
         }
 
         #[cfg(feature = "zygisk")]
-        let zygisk_attachment = if zygisk_enabled && manifest.zygisk.is_some() {
+        let zygisk_action = if zygisk_enabled && manifest.zygisk.is_some() {
             let mut library = Vec::new();
 
             misc::open_file_beneath(&module_dir, Path::new("zygisk/arm64-v8a.so"))?
                 .read_to_end(&mut library)?;
 
             let fd = misc::create_sealed_memfd(&format!("zynx::{module_id}::zygisk"), &library)?;
-            let data = wincode::serialize(&ZygiskParams {
-                module_name: module_id.to_string(),
-            })?;
-
-            Some(Attachment::with_both(Arc::new(fd), data))
+            Some(Action::new(
+                Some(Arc::new(fd)),
+                ActionData::LoadZygisk {
+                    name: module_id.to_string(),
+                },
+            )?)
         } else {
             None
         };
         #[cfg(not(feature = "zygisk"))]
         let _ = zygisk_enabled;
 
-        let data = wincode::serialize(&ZynxParams {
-            module_name: module_id.to_string(),
+        let data = wincode::serialize(&ActionData::LoadNative {
+            name: module_id.to_string(),
         })?;
 
         Ok(Self {
@@ -105,7 +103,7 @@ impl LoadedModule {
             libraries,
             data,
             #[cfg(feature = "zygisk")]
-            zygisk_attachment,
+            zygisk_action,
         })
     }
 
@@ -113,25 +111,20 @@ impl LoadedModule {
     pub(super) async fn check_zygisk(
         &self,
         process: &ProcessInfo,
-    ) -> anyhow::Result<Option<Attachment>> {
-        let (Some(filter), Some(attachment)) = (&self.manifest.zygisk, &self.zygisk_attachment)
-        else {
+    ) -> anyhow::Result<Option<Action>> {
+        let (Some(filter), Some(action)) = (&self.manifest.zygisk, &self.zygisk_action) else {
             return Ok(None);
         };
 
-        Ok(filter.check(process).await?.then(|| attachment.clone()))
+        Ok(filter.check(process).await?.then(|| action.clone()))
     }
 }
 
 #[async_trait]
-impl PolicyProvider for ZynxPolicyProvider {
-    fn provider_type(&self) -> ProviderType {
-        ProviderType::Zynx
-    }
-
+impl PolicyProvider for ModulePolicyProvider {
     async fn init(&self) -> anyhow::Result<()> {
         let Some(module_dir) = env::var_os("MODDIR") else {
-            info!("MODDIR is not set, skip Zynx module scan");
+            info!("MODDIR is not set, skip module scan");
             return Ok(());
         };
 
@@ -141,7 +134,7 @@ impl PolicyProvider for ZynxPolicyProvider {
         let modules = Self::scan_modules(modules_dir, self.zygisk_enabled)?;
 
         if self.modules.set(modules).is_err() {
-            anyhow::bail!("ZynxPolicyProvider is already initialized");
+            anyhow::bail!("ModulePolicyProvider is already initialized");
         }
 
         Ok(())
@@ -151,7 +144,7 @@ impl PolicyProvider for ZynxPolicyProvider {
         let Some(modules) = self.modules.get() else {
             return PolicyDecision::Deny;
         };
-        let mut attachments = Vec::new();
+        let mut actions = Vec::new();
 
         for module in modules {
             let mut matched = HashSet::new();
@@ -181,22 +174,22 @@ impl PolicyProvider for ZynxPolicyProvider {
                 }
 
                 matched.insert(library);
-                attachments.push(Attachment::with_both(
-                    module.libraries[library].clone(),
-                    module.data.clone(),
-                ));
+                actions.push(Action {
+                    fd: Some(module.libraries[library].clone()),
+                    data: module.data.clone(),
+                });
             }
         }
 
-        if attachments.is_empty() {
+        if actions.is_empty() {
             PolicyDecision::Deny
         } else {
-            PolicyDecision::allow_with_attachments(attachments)
+            PolicyDecision::Allow(actions)
         }
     }
 }
 
-impl ZynxPolicyProvider {
+impl ModulePolicyProvider {
     pub(super) fn new(zygisk_enabled: bool) -> Self {
         Self {
             zygisk_enabled,
@@ -233,14 +226,14 @@ impl ZynxPolicyProvider {
 
             match LoadedModule::load(module_id, &module_dir, zygisk_enabled) {
                 Ok(module) => {
-                    info!("loaded Zynx module: {module_id}");
+                    info!("loaded module: {module_id}");
                     modules.push(module);
                 }
-                Err(error) => warn!("failed to load Zynx module {module_id}: {error:#}"),
+                Err(error) => warn!("failed to load module {module_id}: {error:#}"),
             }
         }
 
-        info!("Zynx module scan complete: {} loaded", modules.len());
+        info!("module scan complete: {} loaded", modules.len());
         Ok(modules)
     }
 }
@@ -318,7 +311,6 @@ mod tests {
         use prost::Message;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::UnixListener;
-        use zynx_bridge_shared::policy::zygisk::ZygiskParams;
 
         let directory = std::env::temp_dir().join(format!("zynx-zygisk-{}", std::process::id()));
         std::fs::create_dir_all(directory.join("zygisk")).unwrap();
@@ -366,12 +358,12 @@ mod tests {
         )
         .unwrap();
         let disabled = LoadedModule::load("example", &directory, false).unwrap();
-        assert!(disabled.zygisk_attachment.is_none());
+        assert!(disabled.zygisk_action.is_none());
         assert_eq!(disabled.libraries.len(), 1);
         assert!(LoadedModule::load("example", &directory, true).is_err());
         std::fs::write(directory.join("zygisk/arm64-v8a.so"), b"zygisk").unwrap();
         let module = LoadedModule::load("example", &directory, true).unwrap();
-        let provider = ZynxPolicyProvider::new(true);
+        let provider = ModulePolicyProvider::new(true);
         assert!(provider.modules.set(vec![module]).is_ok());
         let zygisk = provider.zygisk_provider();
         // Both providers must keep using the startup snapshot.
@@ -380,26 +372,21 @@ mod tests {
             zygisk.check(&args(10123)).await,
             PolicyDecision::Deny
         ));
-        let PolicyDecision::Allow {
-            attachments: Some(attachments),
-            ..
-        } = zygisk.check(&args(10123)).await
-        else {
-            panic!("expected Zygisk attachment");
+        let PolicyDecision::Allow(actions) = zygisk.check(&args(10123)).await else {
+            panic!("expected Zygisk action");
         };
-        assert_eq!(attachments.len(), 1);
-        assert!(attachments[0].fd.is_some());
-        let params: ZygiskParams =
-            wincode::deserialize(attachments[0].data.as_ref().unwrap()).unwrap();
-        assert_eq!(params.module_name, "example");
+        assert_eq!(actions.len(), 1);
+        assert!(actions[0].fd.is_some());
+        let data: ActionData = wincode::deserialize(&actions[0].data).unwrap();
+        assert!(matches!(data, ActionData::LoadZygisk { name } if name == "example"));
         assert!(matches!(
             provider.check(&args(10123)).await,
-            PolicyDecision::Allow { .. }
+            PolicyDecision::Allow(_)
         ));
         server.await.unwrap();
     }
 
-    fn provider(input: &str) -> ZynxPolicyProvider {
+    fn provider(input: &str) -> ModulePolicyProvider {
         let manifest = ModuleManifest::parse(input).unwrap();
         let libraries = manifest
             .rules
@@ -411,7 +398,7 @@ mod tests {
                 )
             })
             .collect();
-        let provider = ZynxPolicyProvider::default();
+        let provider = ModulePolicyProvider::default();
         assert!(
             provider
                 .modules
@@ -419,9 +406,9 @@ mod tests {
                     manifest,
                     libraries,
                     #[cfg(feature = "zygisk")]
-                    zygisk_attachment: None,
-                    data: wincode::serialize(&ZynxParams {
-                        module_name: "example".into()
+                    zygisk_action: None,
+                    data: wincode::serialize(&ActionData::LoadNative {
+                        name: "example".into()
                     })
                     .unwrap(),
                 }])
@@ -517,19 +504,15 @@ mod tests {
         "#,
             socket = path.display()
         ));
-        let PolicyDecision::Allow {
-            attachments: Some(attachments),
-            ..
-        } = provider.check(&args(10123)).await
-        else {
+        let PolicyDecision::Allow(actions) = provider.check(&args(10123)).await else {
             panic!("expected matching libraries");
         };
         server.await.unwrap();
-        assert_eq!(attachments.len(), 2);
+        assert_eq!(actions.len(), 2);
         let module = &provider.modules.get().unwrap()[0];
-        for (attachment, path) in attachments.iter().zip(["allowed.so", "denied.so"]) {
+        for (action, path) in actions.iter().zip(["allowed.so", "denied.so"]) {
             assert!(Arc::ptr_eq(
-                attachment.fd.as_ref().unwrap(),
+                action.fd.as_ref().unwrap(),
                 &module.libraries[Path::new(path)]
             ));
         }
@@ -576,23 +559,18 @@ mod tests {
             uid = "10123"
         "#,
         );
-        let PolicyDecision::Allow {
-            attachments: Some(attachments),
-            ..
-        } = provider.check(&args(10123)).await
-        else {
+        let PolicyDecision::Allow(actions) = provider.check(&args(10123)).await else {
             panic!("expected matching libraries");
         };
-        assert_eq!(attachments.len(), 2);
+        assert_eq!(actions.len(), 2);
         let module = &provider.modules.get().unwrap()[0];
-        for (attachment, path) in attachments.iter().zip(["first.so", "second.so"]) {
+        for (action, path) in actions.iter().zip(["first.so", "second.so"]) {
             assert!(Arc::ptr_eq(
-                attachment.fd.as_ref().unwrap(),
+                action.fd.as_ref().unwrap(),
                 &module.libraries[Path::new(path)]
             ));
-            let params: ZynxParams =
-                wincode::deserialize(attachment.data.as_ref().unwrap()).unwrap();
-            assert_eq!(params.module_name, "example");
+            let data: ActionData = wincode::deserialize(&action.data).unwrap();
+            assert!(matches!(data, ActionData::LoadNative { name } if name == "example"));
         }
     }
 }

@@ -77,7 +77,7 @@ impl NativeLibrary {
         }
     }
 
-    pub fn open(&mut self) -> Result<()> {
+    pub fn dlopen(&mut self) -> Result<()> {
         let fd = self.fd.take().context("already opened or fd consumed")?;
 
         info!("dlopen library: {}, fd = {}", self.name, fd.as_raw_fd());

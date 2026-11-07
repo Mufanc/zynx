@@ -1,4 +1,4 @@
-use crate::injector::app::policy::{ProcessInfo, ProviderBundle};
+use crate::injector::app::policy::{Action, ProcessInfo};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, ipc};
 use crate::injector::context::ZynxContext;
@@ -164,7 +164,7 @@ impl EmbryoInjector {
         Ok(())
     }
 
-    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<ProviderBundle>>> {
+    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Action>>> {
         // Todo: selinux check execmem?
 
         let uid = Uid::from_raw(args.uid as _);
@@ -179,9 +179,9 @@ impl EmbryoInjector {
             app_data_dir: self.read_jstring(args.env, args.managed_app_data_dir)?,
         };
         let manager = &self.context.policy;
-        let decisions = manager.check(&process).await;
+        let actions = manager.check(&process).await;
 
-        Ok(manager.aggregate(&decisions))
+        Ok((!actions.is_empty()).then_some(actions))
     }
 
     /// Core injection routine. Assembles an AArch64 trampoline in the remote
@@ -196,12 +196,7 @@ impl EmbryoInjector {
     /// 7. Restore args and tail-call the original SpecializeCommon
     /// 8. On return (via trampoline): call the post-hook
     /// 9. Clean up by munmap-ing the trampoline and returning to the real caller
-    fn do_inject(
-        &self,
-        mut regs: RegSet,
-        raw_args: &[c_long],
-        bundles: Vec<ProviderBundle>,
-    ) -> Result<()> {
+    fn do_inject(&self, mut regs: RegSet, raw_args: &[c_long], actions: Vec<Action>) -> Result<()> {
         info!("injecting process: {self}, raw_args = {raw_args:?}");
 
         // Allocate RWX memory in the remote process for the trampoline code
@@ -229,9 +224,9 @@ impl EmbryoInjector {
 
         let bridge_fd = bridge_fd.forget();
 
-        // If there are bundles to inject, keep the socket open for sending
+        // If there are actions to inject, keep the socket open for sending
         // payload later; otherwise close it immediately
-        let (conn_fd_local, conn_fd_remote) = if !bundles.is_empty() {
+        let (conn_fd_local, conn_fd_remote) = if !actions.is_empty() {
             let (local, remote) = conn.forget();
             (Some(local), Some(remote))
         } else {
@@ -415,7 +410,7 @@ impl EmbryoInjector {
 
         // Send payload over the socket so the bridge can load libraries
         if let Some(conn_fd) = conn_fd_local {
-            ipc::transfer_data(conn_fd, bundles)?;
+            ipc::transfer_data(conn_fd, actions)?;
         }
 
         Ok(())

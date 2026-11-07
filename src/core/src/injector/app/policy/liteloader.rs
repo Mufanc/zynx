@@ -1,5 +1,5 @@
 use crate::android::inotify::AsyncInotify;
-use crate::injector::app::policy::{Attachment, PolicyDecision, PolicyProvider, ProcessInfo};
+use crate::injector::app::policy::{Action, PolicyDecision, PolicyProvider, ProcessInfo};
 use crate::misc::create_sealed_memfd;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -17,8 +17,13 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use std::{fmt, path::Path};
 use tokio::{task, time};
-use zynx_bridge_shared::policy::liteloader::{LibraryKind, LiteLoaderParams};
-use zynx_bridge_shared::zygote::ProviderType;
+use zynx_bridge_shared::action::ActionData;
+
+#[derive(Debug, Clone)]
+enum LibraryKind {
+    Native,
+    Java,
+}
 
 static LITE_LIBRARIES_DIR: Lazy<PathBuf> = Lazy::new(|| "/data/adb/zynx/liteloader".into());
 static LITE_LIBRARY_REGEX: Lazy<Regex> =
@@ -159,10 +164,6 @@ impl LiteLoaderPolicyProvider {
 
 #[async_trait]
 impl PolicyProvider for LiteLoaderPolicyProvider {
-    fn provider_type(&self) -> ProviderType {
-        ProviderType::LiteLoader
-    }
-
     async fn init(&self) -> Result<()> {
         match fs::metadata(&*LITE_LIBRARIES_DIR) {
             Ok(meta) => {
@@ -207,25 +208,27 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
             .and_then(|pkgs| pkgs.iter().find_map(|pkg| libs.get(&pkg.name)));
 
         if let Some(libs) = inject_libs {
-            let attachments: Vec<Attachment> = libs
+            let actions: Vec<Action> = libs
                 .iter()
-                .map(|entry| {
-                    let params = LiteLoaderParams {
-                        lib_name: entry
-                            .path
-                            .file_stem()
-                            .and_then(|stem| stem.to_str())
-                            .unwrap_or("unknown")
-                            .to_string(),
-                        kind: entry.kind.clone(),
+                .filter_map(|entry| {
+                    let name = entry
+                        .path
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let data = match entry.kind {
+                        LibraryKind::Native => ActionData::LoadNative { name },
+                        LibraryKind::Java => ActionData::LoadJava { name },
                     };
-                    let data = wincode::serialize(&params).unwrap_or_default();
 
-                    Attachment::with_both(entry.fd.clone(), data)
+                    Action::new(Some(entry.fd.clone()), data)
+                        .map_err(|error| warn!("failed to build library action: {error:#}"))
+                        .ok()
                 })
                 .collect();
 
-            return PolicyDecision::allow_with_attachments(attachments);
+            return PolicyDecision::Allow(actions);
         }
 
         PolicyDecision::Deny
