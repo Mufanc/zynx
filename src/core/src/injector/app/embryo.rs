@@ -1,4 +1,4 @@
-use crate::injector::app::policy::{EmbryoCheckArgs, ProviderBundle};
+use crate::injector::app::policy::{ProcessInfo, ProviderBundle};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, ipc};
 use crate::injector::context::ZynxContext;
@@ -169,27 +169,19 @@ impl EmbryoInjector {
 
         let uid = Uid::from_raw(args.uid as _);
         let package_info = self.context.package_index.query(uid);
-        let fast_args = EmbryoCheckArgs::new_fast(
+        let process = ProcessInfo {
             uid,
-            Gid::from_raw(args.gid as _),
-            args.is_system_server,
-            args.is_child_zygote,
+            gid: Gid::from_raw(args.gid as _),
+            is_system_server: args.is_system_server,
+            is_child_zygote: args.is_child_zygote,
             package_info,
-        );
-
+            nice_name: self.read_jstring(args.env, args.managed_nice_name)?,
+            app_data_dir: self.read_jstring(args.env, args.managed_app_data_dir)?,
+        };
         let manager = &self.context.policy;
-        let mut result = manager.check(&fast_args).await;
+        let decisions = manager.check(&process).await;
 
-        if result.more_info {
-            let slow_args = fast_args.into_slow(
-                self.read_jstring(args.env, args.managed_nice_name)?,
-                self.read_jstring(args.env, args.managed_app_data_dir)?,
-            );
-
-            manager.recheck_slow(&slow_args, &mut result).await;
-        }
-
-        Ok(manager.aggregate(&result.decisions))
+        Ok(manager.aggregate(&decisions))
     }
 
     /// Core injection routine. Assembles an AArch64 trampoline in the remote

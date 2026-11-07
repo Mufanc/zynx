@@ -1,5 +1,5 @@
 use crate::android::inotify::AsyncInotify;
-use crate::injector::app::policy::{Attachment, EmbryoCheckArgs, PolicyDecision, PolicyProvider};
+use crate::injector::app::policy::{Attachment, PolicyDecision, PolicyProvider, ProcessInfo};
 use crate::misc::create_sealed_memfd;
 use anyhow::{Result, bail};
 use async_trait::async_trait;
@@ -199,7 +199,7 @@ impl PolicyProvider for LiteLoaderPolicyProvider {
         Ok(())
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision {
+    async fn check(&self, args: &ProcessInfo) -> PolicyDecision {
         let libs = self.libs.read();
         let inject_libs = args
             .package_info

@@ -9,26 +9,22 @@ message PackageInfo {
     repeated uint32 gids = 5;
 }
 
-message CheckArgsFast {
+message ProcessInfo {
     uint32 uid = 1;
     uint32 gid = 2;
     bool is_system_server = 3;
     bool is_child_zygote = 4;
     repeated PackageInfo package_info = 5;
+    optional string nice_name = 6;
+    optional string app_data_dir = 7;
 }
 
-message CheckArgsSlow {
-   CheckArgsFast fast = 1;
-   optional string nice_name = 2;
-   optional string app_data_dir = 3;
-}
-
-enum CheckResult {
-    ALLOW = 0;
-    DENY = 1;
-    MORE_INFO = 2;
+message CheckRequest {
+    uint32 protocol_version = 1;
+    ProcessInfo process = 2;
 }
 
 message CheckResponse {
-    CheckResult result = 1;
+    uint32 protocol_version = 1;
+    optional bool allow = 2;
 }

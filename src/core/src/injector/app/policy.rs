@@ -1,4 +1,5 @@
 mod debugger;
+mod filter;
 mod liteloader;
 #[cfg(feature = "zygisk")]
 mod zygisk;
@@ -9,121 +10,30 @@ use crate::cli::FeatureFlags;
 use crate::config::ZynxConfigs;
 use crate::injector::app::policy::debugger::DebuggerPolicyProvider;
 use crate::injector::app::policy::liteloader::LiteLoaderPolicyProvider;
-#[cfg(feature = "zygisk")]
-use crate::injector::app::policy::zygisk::ZygiskPolicyProvider;
 use crate::injector::app::policy::zynx::ZynxPolicyProvider;
-use anyhow::Result;
 use async_trait::async_trait;
 use futures::future;
-use log::warn;
 use nix::unistd::{Gid, Uid};
-use std::any::Any;
 use std::collections::HashMap;
+use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::ops::Deref;
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
-use std::{fmt, mem};
 use zynx_bridge_shared::zygote::ProviderType;
 
 pub mod proto {
     include!(concat!(env!("OUT_DIR"), "/zynx_policy.rs"));
 }
 
-#[allow(unused)]
-pub struct EmbryoCheckArgsFast {
+#[derive(Debug)]
+pub struct ProcessInfo {
     pub uid: Uid,
     pub gid: Gid,
     pub is_system_server: bool,
     pub is_child_zygote: bool,
     pub package_info: Option<Arc<[PackageInfo]>>,
-}
-
-#[allow(unused)]
-pub struct EmbryoCheckArgsSlow {
-    fast_args: EmbryoCheckArgsFast,
     pub nice_name: Option<String>,
     pub app_data_dir: Option<String>,
-}
-
-impl Deref for EmbryoCheckArgsSlow {
-    type Target = EmbryoCheckArgsFast;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fast_args
-    }
-}
-
-pub enum EmbryoCheckArgs {
-    Fast(EmbryoCheckArgsFast),
-    Slow(EmbryoCheckArgsSlow),
-}
-
-impl EmbryoCheckArgs {
-    pub fn new_fast(
-        uid: Uid,
-        gid: Gid,
-        is_system_server: bool,
-        is_child_zygote: bool,
-        package_info: Option<Arc<[PackageInfo]>>,
-    ) -> Self {
-        EmbryoCheckArgs::Fast(EmbryoCheckArgsFast {
-            uid,
-            gid,
-            is_system_server,
-            is_child_zygote,
-            package_info,
-        })
-    }
-
-    pub fn into_slow(self, nice_name: Option<String>, app_data_dir: Option<String>) -> Self {
-        EmbryoCheckArgs::Slow(EmbryoCheckArgsSlow {
-            fast_args: match self {
-                EmbryoCheckArgs::Fast(args) => args,
-                EmbryoCheckArgs::Slow(args) => {
-                    warn!("into_slow called on already slow args, ignoring conversion");
-                    return Self::Slow(args);
-                }
-            },
-            nice_name,
-            app_data_dir,
-        })
-    }
-
-    // pub fn is_fast(&self) -> bool {
-    //     matches!(self, EmbryoCheckArgs::Fast(_))
-    // }
-    //
-    // pub fn is_slow(&self) -> bool {
-    //     !self.is_fast()
-    // }
-
-    pub fn assume_fast(&self) -> &EmbryoCheckArgsFast {
-        if let EmbryoCheckArgs::Fast(args) = self {
-            return args;
-        }
-
-        panic!("unexpected check args: expected `fast` but got `slow`");
-    }
-
-    pub fn assume_slow(&self) -> &EmbryoCheckArgsSlow {
-        if let EmbryoCheckArgs::Slow(args) = self {
-            return args;
-        }
-
-        panic!("unexpected check args: expected `slow` but got `fast`");
-    }
-}
-
-impl Deref for EmbryoCheckArgs {
-    type Target = EmbryoCheckArgsFast;
-
-    fn deref(&self) -> &Self::Target {
-        match self {
-            EmbryoCheckArgs::Fast(args) => args,
-            EmbryoCheckArgs::Slow(args) => &args.fast_args,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -167,24 +77,10 @@ pub enum PolicyDecision {
         data: Option<Vec<u8>>,
         attachments: Option<Vec<Attachment>>,
     },
-    MoreInfo {
-        state: Option<Box<dyn Any + Send + Sync>>,
-    },
     Deny,
 }
 
 impl PolicyDecision {
-    pub fn more_info() -> Self {
-        PolicyDecision::MoreInfo { state: None }
-    }
-
-    pub fn allow() -> Self {
-        PolicyDecision::Allow {
-            data: None,
-            attachments: None,
-        }
-    }
-
     pub fn allow_with_attachments(attachments: Vec<Attachment>) -> Self {
         PolicyDecision::Allow {
             data: None,
@@ -208,35 +104,20 @@ impl Debug for PolicyDecision {
                 .field("attachments", &attachments.as_ref().map(|a| a.len()))
                 .field("data", &data.as_ref().map(|d| d.len()))
                 .finish(),
-            PolicyDecision::MoreInfo { .. } => fmt.write_str("MoreInfo(...)"),
             PolicyDecision::Deny => fmt.write_str("Deny"),
         }
     }
-}
-
-#[derive(Debug)]
-pub struct PolicyDecisions {
-    pub decisions: Vec<PolicyDecision>,
-    pub more_info: bool,
 }
 
 #[async_trait]
 pub trait PolicyProvider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
 
-    async fn init(&self) -> Result<()> {
+    async fn init(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision;
-
-    async fn recheck(
-        &self,
-        args: &EmbryoCheckArgs,
-        _state: Box<dyn Any + Send + Sync>,
-    ) -> PolicyDecision {
-        self.check(args).await
-    }
+    async fn check(&self, args: &ProcessInfo) -> PolicyDecision;
 }
 
 #[derive(Default)]
@@ -245,7 +126,7 @@ pub struct PolicyProviderManager {
 }
 
 impl PolicyProviderManager {
-    pub async fn new(config: &ZynxConfigs) -> Result<Self> {
+    pub async fn new(config: &ZynxConfigs) -> anyhow::Result<Self> {
         let mut instance = Self::default();
 
         if config.features.contains(FeatureFlags::DEBUGGER) {
@@ -256,17 +137,25 @@ impl PolicyProviderManager {
             instance.register::<LiteLoaderPolicyProvider>().await?;
         }
 
-        instance.register::<ZynxPolicyProvider>().await?;
+        #[cfg(feature = "zygisk")]
+        let zygisk_enabled = config.features.contains(FeatureFlags::ZYGISK);
+        #[cfg(not(feature = "zygisk"))]
+        let zygisk_enabled = false;
+        let zynx = ZynxPolicyProvider::new(zygisk_enabled);
+
+        zynx.init().await?;
 
         #[cfg(feature = "zygisk")]
         if config.features.contains(FeatureFlags::ZYGISK) {
-            instance.register::<ZygiskPolicyProvider>().await?;
+            instance.providers.push(Box::new(zynx.zygisk_provider()));
         }
+
+        instance.providers.push(Box::new(zynx));
 
         Ok(instance)
     }
 
-    pub async fn register<P: PolicyProvider + Default + 'static>(&mut self) -> Result<()> {
+    pub async fn register<P: PolicyProvider + Default + 'static>(&mut self) -> anyhow::Result<()> {
         let provider = P::default();
 
         provider.init().await?;
@@ -275,67 +164,11 @@ impl PolicyProviderManager {
         Ok(())
     }
 
-    /// Run fast check on all providers concurrently.
-    pub async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecisions {
-        let futures: Vec<_> = self.providers.iter().map(|p| p.check(args)).collect();
+    /// Check all providers concurrently using complete process information.
+    pub async fn check(&self, args: &ProcessInfo) -> Vec<PolicyDecision> {
+        let checks = self.providers.iter().map(|provider| provider.check(args));
 
-        let decisions = future::join_all(futures).await;
-        let more_info = decisions
-            .iter()
-            .any(|it| matches!(it, PolicyDecision::MoreInfo { .. }));
-
-        PolicyDecisions {
-            decisions,
-            more_info,
-        }
-    }
-
-    /// Re-check providers that returned MoreInfo with slow (full) args.
-    /// Cached state from the fast check is forwarded to `recheck` when available.
-    pub async fn recheck_slow(&self, args: &EmbryoCheckArgs, result: &mut PolicyDecisions) {
-        result.more_info = false;
-
-        // Extract MoreInfo decisions along with their cached state,
-        // replacing them with Deny as placeholders.
-        let mut recheck_items = Vec::new();
-        let decisions = mem::take(&mut result.decisions);
-
-        result.decisions = decisions
-            .into_iter()
-            .enumerate()
-            .map(|(i, it)| match it {
-                PolicyDecision::MoreInfo { state } => {
-                    recheck_items.push((i, state));
-                    PolicyDecision::Deny
-                }
-                other => other,
-            })
-            .collect();
-
-        // Re-check concurrently: use `recheck` if state is available, otherwise `check`.
-        let futures: Vec<_> = recheck_items
-            .into_iter()
-            .map(|(i, state)| async move {
-                let decision = match state {
-                    Some(s) => self.providers[i].recheck(args, s).await,
-                    None => self.providers[i].check(args).await,
-                };
-
-                (i, decision)
-            })
-            .collect();
-
-        let new_decisions = future::join_all(futures).await;
-
-        // Apply new decisions; MoreInfo in slow path is not allowed.
-        for (index, new_decision) in new_decisions {
-            if matches!(new_decision, PolicyDecision::MoreInfo { .. }) {
-                warn!("provider {index} returned MoreInfo in slow path, treating as Deny");
-                result.decisions[index] = PolicyDecision::Deny;
-            } else {
-                result.decisions[index] = new_decision;
-            }
-        }
+        future::join_all(checks).await
     }
 
     /// Aggregate decisions from all policy providers.

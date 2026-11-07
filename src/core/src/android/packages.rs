@@ -20,7 +20,7 @@ static PACKAGE_LIST_FILE: Lazy<PathBuf> = Lazy::new(|| "/data/system/packages.li
 #[derive(Clone, Debug)]
 pub struct PackageInfo {
     pub name: String,
-    pub uid: Uid,
+    pub app_id: u32,
     pub debuggable: bool,
     pub data_dir: String,
     pub seinfo: String,
@@ -46,7 +46,7 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
     }
 
     let name = fields[0].into();
-    let uid = Uid::from_raw(fields[1].parse().ok()?);
+    let app_id = fields[1].parse().ok()?;
     let debuggable = fields[2] != "0";
     let data_dir = fields[3].into();
     let seinfo = fields[4].into();
@@ -54,7 +54,7 @@ fn parse_line(line: &str) -> Option<PackageInfo> {
 
     Some(PackageInfo {
         name,
-        uid,
+        app_id,
         debuggable,
         data_dir,
         seinfo,
@@ -77,7 +77,7 @@ pub fn parse_package_list() -> Result<Vec<PackageInfo>> {
 }
 
 pub struct PackageInfoService {
-    data: Arc<RwLock<HashMap<Uid, Arc<[PackageInfo]>>>>,
+    data: Arc<RwLock<HashMap<u32, Arc<[PackageInfo]>>>>,
     _watch_task: JoinHandle<()>,
 }
 
@@ -111,15 +111,15 @@ impl PackageInfoService {
     }
 
     pub fn query(&self, uid: Uid) -> Option<Arc<[PackageInfo]>> {
-        let app_id = Uid::from_raw(uid.as_raw() % PER_USER_RANGE);
+        let app_id = uid.as_raw() % PER_USER_RANGE;
         self.data.read().get(&app_id).cloned()
     }
 
-    fn build_map(packages: Vec<PackageInfo>) -> HashMap<Uid, Arc<[PackageInfo]>> {
-        let mut map: HashMap<Uid, Vec<PackageInfo>> = HashMap::new();
+    fn build_map(packages: Vec<PackageInfo>) -> HashMap<u32, Arc<[PackageInfo]>> {
+        let mut map: HashMap<u32, Vec<PackageInfo>> = HashMap::new();
 
         for info in packages {
-            map.entry(info.uid).or_default().push(info);
+            map.entry(info.app_id).or_default().push(info);
         }
 
         map.into_iter()
@@ -129,7 +129,7 @@ impl PackageInfoService {
 
     async fn watch_loop(
         mut inotify: AsyncInotify,
-        data: Arc<RwLock<HashMap<Uid, Arc<[PackageInfo]>>>>,
+        data: Arc<RwLock<HashMap<u32, Arc<[PackageInfo]>>>>,
     ) -> Result<()> {
         loop {
             let event = inotify.wait().await?;
@@ -143,7 +143,7 @@ impl PackageInfoService {
         }
     }
 
-    fn reload_packages(data: &RwLock<HashMap<Uid, Arc<[PackageInfo]>>>) {
+    fn reload_packages(data: &RwLock<HashMap<u32, Arc<[PackageInfo]>>>) {
         match parse_package_list() {
             Ok(packages) => {
                 let new_map = Self::build_map(packages);
@@ -169,11 +169,11 @@ mod tests {
 
     #[tokio::test]
     async fn query_uses_app_id_and_owns_snapshot() {
-        let app_id = Uid::from_raw(10_123);
+        let app_id = 10_123;
         let data = Arc::new(RwLock::new(PackageInfoService::build_map(vec![
             PackageInfo {
                 name: "com.example".into(),
-                uid: app_id,
+                app_id,
                 debuggable: false,
                 data_dir: "/data/user/0/com.example".into(),
                 seinfo: "default".into(),

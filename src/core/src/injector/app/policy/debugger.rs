@@ -1,4 +1,4 @@
-use crate::injector::app::policy::{EmbryoCheckArgs, PolicyDecision, PolicyProvider};
+use crate::injector::app::policy::{PolicyDecision, PolicyProvider, ProcessInfo};
 use async_trait::async_trait;
 use zynx_bridge_shared::policy::debugger::DebuggerParams;
 use zynx_bridge_shared::zygote::ProviderType;
@@ -13,7 +13,7 @@ impl PolicyProvider for DebuggerPolicyProvider {
         ProviderType::Debugger
     }
 
-    async fn check(&self, args: &EmbryoCheckArgs) -> PolicyDecision {
+    async fn check(&self, args: &ProcessInfo) -> PolicyDecision {
         let Some(pkgs) = args.package_info.as_deref() else {
             return PolicyDecision::Deny;
         };

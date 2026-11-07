@@ -1,7 +1,7 @@
 use std::mem::size_of;
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, IntoRawFd, OwnedFd, RawFd};
 
-use anyhow::{Result, bail};
+use anyhow::{Result, bail, ensure};
 use jni::sys::{JNIEnv, jint, jintArray, jlong, jobjectArray, jstring};
 use log::debug;
 use nix::libc::{c_int, c_long};
@@ -200,7 +200,7 @@ impl IpcPayload {
         let raw_fds: Vec<RawFd> = fds.into_iter().map(|fd| fd.as_raw_fd()).collect();
         let data = wincode::serialize(self)?;
 
-        assert!(
+        ensure!(
             raw_fds.len() <= SCM_MAX_FD,
             "too many fds to send: {} (max {SCM_MAX_FD})",
             raw_fds.len()
