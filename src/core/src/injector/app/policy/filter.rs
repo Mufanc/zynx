@@ -1,12 +1,14 @@
 use super::ProcessInfo;
 use super::proto::{CheckRequest, CheckResponse, PackageInfo, ProcessInfo as ProcessInfoWire};
 use anyhow::{Context, bail, ensure};
+use nix::errno::Errno;
 use nix::sys::socket::{self, AddressFamily, SockFlag, SockType, UnixAddr};
 use prost::Message;
-use regex_lite::Regex;
+use std::collections::HashSet;
 use std::fs;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::io::AsRawFd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -42,33 +44,118 @@ impl ExternalFilter {
     }
 }
 
-/// Resolve the latest abstract socket matching `<prefix>_<seq>_<random>`.
-/// Returns the socket name as bytes (without the `@` prefix) for use with `UnixAddr::new_abstract`.
-fn resolve_abstract_socket(prefix: &str) -> anyhow::Result<Vec<u8>> {
-    let pattern = format!(r"^{}_(\d+)_[a-zA-Z0-9-]+$", regex_lite::escape(prefix));
-    let re = Regex::new(&pattern)?;
+#[derive(Debug, PartialEq)]
+struct AbstractSocketIdentity {
+    pid: i32,
+    fd: i32,
+    sequence: u64,
+}
 
+impl AbstractSocketIdentity {
+    fn parse(name: &str, prefix: &str) -> Option<Self> {
+        let fields = name.strip_prefix(prefix)?.strip_prefix("/v1:")?;
+        let mut seen = HashSet::new();
+        let (mut pid, mut fd, mut sequence, mut random) = (None, None, None, None);
+
+        for field in fields.split(';') {
+            let (key, value) = field.split_once('=')?;
+
+            if key.is_empty() || value.is_empty() || !seen.insert(key) {
+                return None;
+            }
+
+            match key {
+                "p" | "f" | "s" => {
+                    if !value.bytes().all(|byte| byte.is_ascii_digit()) {
+                        return None;
+                    }
+
+                    match key {
+                        "p" => pid = Some(value.parse::<i32>().ok()?),
+                        "f" => fd = Some(value.parse::<i32>().ok()?),
+                        "s" => sequence = Some(value.parse::<u64>().ok()?),
+                        _ => unreachable!(),
+                    }
+                }
+                "?" => random = Some(value),
+                _ => {}
+            }
+        }
+
+        let pid = pid.filter(|pid| *pid > 0)?;
+
+        random?;
+
+        Some(Self {
+            pid,
+            fd: fd?,
+            sequence: sequence?,
+        })
+    }
+
+    fn validate(&self, inode: u64) -> anyhow::Result<()> {
+        let path = format!("/proc/{}/fd/{}", self.pid, self.fd);
+        let metadata = root_metadata(Path::new(&path))?;
+
+        ensure!(
+            metadata.file_type().is_socket(),
+            "advertised FD is not a socket"
+        );
+        ensure!(metadata.ino() == inode, "abstract socket inode mismatch");
+
+        Ok(())
+    }
+}
+
+fn root_metadata(path: &Path) -> anyhow::Result<fs::Metadata> {
+    let metadata = fs::metadata(path)
+        .with_context(|| format!("cannot stat filter endpoint {}", path.display()))?;
+
+    ensure!(
+        metadata.uid() == 0,
+        "filter endpoint must be owned by root: {}",
+        path.display()
+    );
+
+    Ok(metadata)
+}
+
+fn resolve_abstract_socket(prefix: &str) -> anyhow::Result<Vec<u8>> {
     let content = fs::read_to_string("/proc/net/unix")?;
     let mut best: Option<(u64, &str)> = None;
 
     for line in content.lines().skip(1) {
-        let path = match line.rsplit_once(char::is_whitespace) {
-            Some((_, path)) if path.starts_with('@') => &path[1..],
-            _ => continue,
+        let fields: Vec<_> = line.split_whitespace().collect();
+        let [_, _, _, flags, kind, state, inode, name] = fields.as_slice() else {
+            continue;
         };
 
-        if let Some(caps) = re.captures(path)
-            && let Ok(seq) = caps[1].parse::<u64>()
-            && best.is_none_or(|(best_seq, _)| seq > best_seq)
+        // Only consider listening stream sockets: SO_ACCEPTCON, SOCK_STREAM, SS_UNCONNECTED.
+        if *flags != "00010000" || *kind != "0001" || *state != "01" {
+            continue;
+        }
+
+        let Some(name) = name.strip_prefix('@') else {
+            continue;
+        };
+        let Some(identity) = AbstractSocketIdentity::parse(name, prefix) else {
+            continue;
+        };
+        let Ok(inode) = inode.parse::<u64>() else {
+            continue;
+        };
+
+        if best.is_none_or(|(sequence, _)| identity.sequence > sequence)
+            && identity.validate(inode).is_ok()
         {
-            best = Some((seq, path));
+            best = Some((identity.sequence, name));
         }
     }
 
-    match best {
-        Some((_, name)) => Ok(name.as_bytes().to_vec()),
-        None => bail!("no abstract socket found with prefix \"{prefix}\""),
-    }
+    best.map(|(_, name)| name.as_bytes().to_vec())
+        .with_context(|| {
+            format!("no root-owned abstract filter socket found with prefix {prefix:?}")
+        })
 }
 
 enum AdapterConnection {
@@ -84,29 +171,46 @@ impl AdapterConnection {
     async fn connect(filter: &ExternalFilter) -> anyhow::Result<Self> {
         match filter {
             ExternalFilter::SocketFile { path } => {
+                ensure!(
+                    root_metadata(path)?.file_type().is_socket(),
+                    "filter endpoint is not a socket"
+                );
+
                 let stream = UnixStream::connect(path).await?;
-                Ok(AdapterConnection::Socket(stream))
+                Self::from_socket(stream)
             }
             ExternalFilter::UnixAbstract { prefix } => {
                 let name = resolve_abstract_socket(prefix)?;
                 let fd = socket::socket(
                     AddressFamily::Unix,
                     SockType::Stream,
-                    SockFlag::SOCK_CLOEXEC,
+                    SockFlag::SOCK_CLOEXEC | SockFlag::SOCK_NONBLOCK,
                     None,
                 )?;
                 let addr = UnixAddr::new_abstract(&name)?;
 
-                socket::connect(fd.as_raw_fd(), &addr)?;
+                match socket::connect(fd.as_raw_fd(), &addr) {
+                    Ok(()) | Err(Errno::EINPROGRESS) => {}
+                    Err(error) => return Err(error.into()),
+                }
 
                 let std_stream = std::os::unix::net::UnixStream::from(fd);
-
-                std_stream.set_nonblocking(true)?;
-
                 let stream = UnixStream::from_std(std_stream)?;
-                Ok(AdapterConnection::Socket(stream))
+
+                stream.writable().await?;
+
+                if let Some(error) = stream.take_error()? {
+                    return Err(error.into());
+                }
+
+                Self::from_socket(stream)
             }
             ExternalFilter::Stdio { path, args } => {
+                ensure!(
+                    root_metadata(path)?.is_file(),
+                    "stdio filter is not a regular file"
+                );
+
                 let mut child = Command::new(path)
                     .args(args)
                     .stdin(Stdio::piped())
@@ -125,6 +229,11 @@ impl AdapterConnection {
                 })
             }
         }
+    }
+
+    fn from_socket(stream: UnixStream) -> anyhow::Result<Self> {
+        ensure!(stream.peer_cred()?.uid() == 0, "filter peer must be root");
+        Ok(Self::Socket(stream))
     }
 
     async fn post_message(&mut self, msg: &impl Message) -> anyhow::Result<()> {
@@ -242,6 +351,182 @@ fn build_process_info(process: &ProcessInfo) -> ProcessInfoWire {
 mod tests {
     use super::*;
     use nix::unistd::{Gid, Uid};
+    use std::io::{Read, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    const RANDOM: &str = "random-suffix";
+
+    #[test]
+    fn parses_named_abstract_fields_and_rejects_invalid_identities() {
+        let name = format!("example/v1:?={RANDOM};s=42;f=0;p=1234;extra=value");
+        assert_eq!(
+            AbstractSocketIdentity::parse(&name, "example"),
+            Some(AbstractSocketIdentity {
+                pid: 1234,
+                fd: 0,
+                sequence: 42,
+            })
+        );
+
+        for fields in [
+            format!("p=0;f=7;s=42;?={RANDOM}"),
+            format!("p=1234;f=-1;s=42;?={RANDOM}"),
+            format!("p=1234;f=7;s=18446744073709551616;?={RANDOM}"),
+            format!("p=1234;f=7;s=42;p=1234;?={RANDOM}"),
+            format!("p=1234;s=42;?={RANDOM}"),
+            "p=1234;f=7;s=42".into(),
+            "p=1234;f=7;s=42;?=".into(),
+        ] {
+            assert!(
+                AbstractSocketIdentity::parse(&format!("example/v1:{fields}"), "example").is_none(),
+                "{fields}"
+            );
+        }
+
+        assert!(AbstractSocketIdentity::parse(&name.replace("/v1:", "/v2:"), "example").is_none());
+        assert!(AbstractSocketIdentity::parse(&name, "exam").is_none());
+    }
+
+    fn abstract_listener(
+        prefix: &str,
+        sequence: u64,
+        advertised_fd: Option<i32>,
+    ) -> std::os::fd::OwnedFd {
+        let fd = socket::socket(
+            AddressFamily::Unix,
+            SockType::Stream,
+            SockFlag::SOCK_CLOEXEC | SockFlag::SOCK_NONBLOCK,
+            None,
+        )
+        .unwrap();
+        let name = format!(
+            "{prefix}/v1:p={};f={};s={sequence};?={RANDOM}",
+            std::process::id(),
+            advertised_fd.unwrap_or(fd.as_raw_fd())
+        );
+        let address = UnixAddr::new_abstract(name.as_bytes()).unwrap();
+        socket::bind(fd.as_raw_fd(), &address).unwrap();
+        socket::listen(&fd, socket::Backlog::new(1).unwrap()).unwrap();
+        fd
+    }
+
+    #[tokio::test]
+    async fn authenticates_abstract_inode_before_selecting_latest_socket() {
+        assert!(
+            Uid::effective().is_root(),
+            "run endpoint authentication tests as root"
+        );
+        let prefix = format!("zynx-test-{}", std::process::id());
+        let first = abstract_listener(&prefix, 1, None);
+        let latest = abstract_listener(&prefix, 2, None);
+        let forged = abstract_listener(&prefix, 99, Some(first.as_raw_fd()));
+        let untrusted = abstract_listener(&prefix, 100, None);
+        nix::unistd::fchown(&untrusted, Some(Uid::from_raw(2000)), None).unwrap();
+
+        let name = resolve_abstract_socket(&prefix).unwrap();
+        assert_eq!(
+            AbstractSocketIdentity::parse(std::str::from_utf8(&name).unwrap(), &prefix)
+                .unwrap()
+                .sequence,
+            2
+        );
+        let connection = AdapterConnection::connect(&ExternalFilter::UnixAbstract { prefix })
+            .await
+            .unwrap();
+        let accepted = socket::accept(latest.as_raw_fd()).unwrap();
+        nix::unistd::close(accepted).unwrap();
+        assert_eq!(socket::accept(first.as_raw_fd()), Err(Errno::EAGAIN));
+        assert_eq!(socket::accept(forged.as_raw_fd()), Err(Errno::EAGAIN));
+        assert_eq!(socket::accept(untrusted.as_raw_fd()), Err(Errno::EAGAIN));
+        connection.close().await;
+    }
+
+    #[tokio::test]
+    async fn checks_file_owners_and_types_before_using_endpoints() {
+        assert!(
+            Uid::effective().is_root(),
+            "run endpoint authentication tests as root"
+        );
+        let path = std::env::temp_dir().join(format!("zynx-filter-{}", std::process::id()));
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let filter = ExternalFilter::SocketFile { path: path.clone() };
+        let connection = AdapterConnection::connect(&filter).await.unwrap();
+        let _accepted = listener.accept().unwrap();
+        connection.close().await;
+        nix::unistd::chown(&path, Some(Uid::from_raw(2000)), None).unwrap();
+        assert!(AdapterConnection::connect(&filter).await.is_err());
+        assert_eq!(
+            listener.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        fs::remove_file(&path).unwrap();
+
+        fs::write(&path, "#!/system/bin/sh\nexit 0\n").unwrap();
+        assert!(AdapterConnection::connect(&filter).await.is_err());
+        let stdio = ExternalFilter::Stdio {
+            path: path.clone(),
+            args: vec![],
+        };
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        let connection = AdapterConnection::connect(&stdio).await.unwrap();
+        connection.close().await;
+        nix::unistd::chown(&path, Some(Uid::from_raw(2000)), None).unwrap();
+        assert!(AdapterConnection::connect(&stdio).await.is_err());
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_non_root_peer_on_root_owned_socket() {
+        const CHILD_PATH: &str = "ZYNX_FILTER_TEST_PEER_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let _listener = std::os::unix::net::UnixListener::bind(path).unwrap();
+            println!("FILTER_PEER_READY");
+            std::io::stdout().flush().unwrap();
+            let _ = std::io::stdin().read(&mut [0]);
+            return;
+        }
+
+        assert!(
+            Uid::effective().is_root(),
+            "run endpoint authentication tests as root"
+        );
+        let path = std::env::temp_dir().join(format!("zynx-filter-peer-{}", std::process::id()));
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "injector::app::policy::filter::tests::rejects_non_root_peer_on_root_owned_socket",
+                "--exact",
+                "--nocapture",
+            ])
+            .env(CHILD_PATH, &path)
+            .uid(2000)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut output = BufReader::new(child.stdout.take().unwrap()).lines();
+        timeout(IO_TIMEOUT, async {
+            while let Some(line) = output.next_line().await.unwrap() {
+                if line.contains("FILTER_PEER_READY") {
+                    return;
+                }
+            }
+            panic!("peer exited before listening");
+        })
+        .await
+        .unwrap();
+        nix::unistd::chown(&path, Some(Uid::from_raw(0)), None).unwrap();
+        let result =
+            AdapterConnection::connect(&ExternalFilter::SocketFile { path: path.clone() }).await;
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "filter peer must be root"
+        );
+        child.kill().await.unwrap();
+        fs::remove_file(path).unwrap();
+    }
 
     fn process() -> ProcessInfo {
         ProcessInfo {

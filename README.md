@@ -115,13 +115,23 @@ type = "socket_file"
 path = "/data/adb/example/filter.sock"
 ```
 
-For an abstract socket, Zynx selects the highest sequence in `<prefix>_<seq>_<suffix>`:
+For an abstract socket, configure its name prefix:
 
 ```toml
 [inject.filter]
 type = "unix_abstract"
 prefix = "example"
 ```
+
+Abstract socket names use `<prefix>/v1:p=<pid>;f=<fd>;s=<sequence>;?=<random>`, for example:
+
+```text
+example/v1:p=1234;f=7;s=42;?=0123456789abcdef0123456789abcdef
+```
+
+All four fields are required and may appear in any order. `p` is a positive PID, `f` is a nonnegative FD, `s` is a `u64` sequence, and `?` is a nonempty random suffix. Duplicate fields and unsupported name versions are rejected; unknown fields are ignored. The complete name must fit within 107 bytes. The server must retain the advertised PID and FD while listening.
+
+Before connecting, Zynx verifies that each candidate is a listening Unix stream socket and that `/proc/<pid>/fd/<fd>` refers to the same socket inode owned by root. It selects the highest sequence among verified candidates. Stdio executables must be root-owned regular files; file sockets must be root-owned sockets. Both socket transports also require root peer credentials before any request is sent.
 
 Each connection exchanges one request and one response. Stdio starts a child per check and terminates it afterward. Frames contain a 4-byte little-endian length followed by Protobuf data, limited to 1 MiB. Sending and receiving each have a 1-second timeout.
 
