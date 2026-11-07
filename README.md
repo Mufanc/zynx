@@ -1,32 +1,37 @@
 # Zynx
 
-Zynx (**Zy**gote **N**e**x**us) is a dynamic code injection framework for Android, written in Rust. It uses eBPF for kernel-level process monitoring and ptrace for runtime injection, loading custom code into app processes during initialization.
+Zynx (**Zy**gote **N**e**x**us) is an Android code injection framework written in Rust. It uses eBPF to monitor processes and ptrace to inject a bridge at `SpecializeCommon`.
 
-## Features
+## Build Modes
 
-- **eBPF-based process monitoring** — efficiently tracks Zygote fork events in kernel space
-- **Ptrace-driven injection** — injects code into app processes at the `SpecializeCommon` stage
-- **Stealthy** — traceless operation with no mounts; non-target processes are left completely untouched
-- **Policy framework** — determines per-app injection decisions using complete process information
+The default `standalone` build embeds the bridge and provides LiteLoader and Debugger. Module builds use `--no-default-features`, require `--bridge PATH`, and support daemon mode and module configuration. Add the Cargo feature `zygisk` for Zygisk compatibility.
 
-## Daemon Mode
+Standalone runs in the foreground. Attach to a running zygote with:
 
-`zynx daemon` starts the daemon in the background and exits once initialization is complete. This makes it suitable for use in scripts like `post-fs-data.sh`.
+```shell
+zynx --features debugger:liteloader attach-zygote <pid>
+```
 
-## Usage
+Without a subcommand, standalone watches for zygote startup. Module builds can start a daemon for boot scripts:
 
-### Modules
+```shell
+zynx --bridge /path/to/libzynx_bridge.so daemon --wait-bpfloader
+```
 
-Place `zynx.toml` in a module directory next to the Zynx module. Zynx scans the parent of `MODDIR` at startup and skips modules with a `disable` marker. Configuration and libraries are loaded once at startup.
+Runtime `--features` accepts colon-separated names: `debugger`, `liteloader`, and `zygisk` when compiled in. These capabilities are disabled by default. Standalone and Zygisk build features are mutually exclusive.
 
-Only `manifest_version = 2` is supported. A manifest must contain at least one `[[inject]]` rule or a `[zygisk]` section. A module can declare multiple libraries with independent rules:
+## Module Configuration
+
+Module builds read `zynx.toml` from module directories alongside the Zynx module. At startup, they scan the parent of `MODDIR`, skip directories with a `disable` marker, and cache configuration and libraries.
+
+A manifest requires `manifest_version = 2` and at least one `[[inject]]` rule or a `[zygisk]` section:
 
 ```toml
 manifest_version = 2
 
 [[inject]]
-library = "lib/main.so"
 source = "zygote"
+library = "lib/main.so"
 
 [inject.filter]
 type = "static"
@@ -35,119 +40,108 @@ process_name = "com.example.app"
 user_id = "0"
 
 [[inject]]
-library = "lib/worker.so"
 source = "zygote"
+library = "lib/worker.so"
 
 [inject.filter]
 type = "static"
-packages = ["com.example.app"]
 process_name_matches = '^com\.example\.app:worker$'
-uid = "10000-"
 ```
 
-Each static filter combines its conditions with AND. All matching rules contribute libraries, in rule order. The same module-relative library path is loaded once per process, including paths with redundant `./` components. Paths must stay beneath the module directory. A missing or invalid zygote library causes the module to be skipped.
+Every rule requires a typed `filter`. Static filters require at least one condition and combine conditions with AND. Matching rules load libraries in rule order, once per module-relative path per process. Library paths must stay beneath the module directory. Invalid configuration or an unreadable required library causes the module to be skipped.
 
-Alternatively, a zygote rule can delegate its decision to an external filter:
+### Static Conditions
 
 ```toml
-
-[[inject]]
-source = "zygote"
-library = "lib/example.so"
-
 [inject.filter]
-type = "stdio"
-path = "/data/adb/modules/example/bin/filter"
-args = ["--profile", "example"]
+type = "static"
+uid = "10000-"                       # Full Linux UID
+user_id = "0"                        # Android user ID (uid / 100000)
+packages = ["com.example.app"]        # Any package associated with the process UID
+process_name = "com.example.app"      # Exact zygote process name
+# Or use a regular expression: process_name_matches = '^com\.example\.app(:.*)?$'
+is_system_server = false
+is_child_zygote = false
 ```
 
-Every injection rule and Zygisk section requires a typed `filter`. Use `type = "static"` for built-in matching and specify at least one condition. Empty static filters are rejected; Zynx does not implicitly inject into every process. Individual omitted conditions impose no additional restriction. Static conditions cannot be placed outside `filter` or mixed into an external filter. Each rule decides independently: rejection or communication failure skips that rule, and another rule can still allow the same library. External filters are currently supported only for `source = "zygote"`. Native module filters do not require Zygisk support or a runtime feature switch. Transport options and the shared protocol are described below.
+Set at most one of `process_name` and `process_name_matches`. Omitted conditions impose no restriction. Unknown fields are rejected.
 
-The optional `uid` and `user_id` fields accept decimal strings with single values, inclusive ranges, comma-separated unions, and an omitted range endpoint. Examples include `"12000"`, `"0-9999,12000"`, `"10000-"` (10000 through `u32::MAX`), and `"-9999"` (0 through 9999). Both endpoints are inclusive. `*` and a range with both endpoints omitted (`"-"`) are rejected. `uid` matches the full Linux UID and `user_id` matches `uid / 100000`. Omit a field to leave it unrestricted.
+`uid` and `user_id` accept decimal strings: `"12000"`, `"0-9999"`, `"0-9999,12000"`, `"10000-"` (10000 and above), or `"-9999"` (0 through 9999). Range endpoints are inclusive; at least one endpoint is required.
 
-`packages` matches any package associated with the process UID. `process_name` matches the exact zygote nice name, while `process_name_matches` uses regular expression search. Use anchors for a full-name match and set only one of these fields per rule. Optional `is_system_server` and `is_child_zygote` fields match the corresponding process flags. Unknown fields and invalid rules cause the module to be skipped.
+### Init Service Injection (WIP)
 
-Rules with `source = "init"` are also accepted. They require exactly one of `path` (an absolute executable path) or `name` (the exec basename), both using exact matching, and support optional `uid` and `user_id` conditions. A `name` must be nonempty, cannot be `.` or `..`, and cannot contain `/` or NUL. All conditions belong in a `type = "static"` filter. Zygote-specific matching fields are rejected:
+Target service processes started by init with a static filter. Specify exactly one of `path` (absolute executable path) or `name` (exec basename), plus optional `uid` and `user_id` conditions:
 
 ```toml
-
 [[inject]]
 source = "init"
 library = "lib/service.so"
 
 [inject.filter]
 type = "static"
-path = "/vendor/bin/example-service"
+name = "example-service"
 uid = "0-9999"
-
-[[inject]]
-source = "init"
-library = "lib/other-service.so"
-
-[inject.filter]
-type = "static"
-name = "other-service"
 ```
 
-Init injection is not implemented yet. These rules are parsed and produce a warning, while library preparation and injection are skipped. Zygote rules in the same module continue to work.
+### Zygisk Compatibility (WIP)
 
-### LiteLoader
-
-> Requires `--features liteloader` to be enabled.
-
-Place shared libraries (`.so`) or dex files (`.dex`) in `/data/adb/zynx/liteloader/` with the naming convention `<package_name>@<library_name>.(so|dex)`. They will be automatically loaded into the target app process.
-
-For `.dex` files, the entry class must be `xyz.mufanc.zynx.Main` with a `public static void main(String[])` method.
-
-### Force Debuggable
-
-> Requires `--features debugger` to be enabled.
-
-Set the system property `debug.zynx.debuggable.<package_name>` to `1` to force-enable debugging for the specified app:
-
-```shell
-setprop debug.zynx.debuggable.com.example.app 1
-```
-
-### Zygisk (WIP)
-
-> Requires `--features zygisk` to be enabled.
-
-Enables Zygisk compatibility layer, allowing Zynx to load Zygisk modules.
-
-Zygisk uses the same module-local `zynx.toml`, with a separate section:
+Requires a Zygisk-enabled module build and runtime `--features zygisk`. Configure the module's Zygisk component in the same manifest:
 
 ```toml
-manifest_version = 2
-
 [zygisk.filter]
 type = "static"
 packages = ["com.example.app"]
 user_id = "0"
 ```
 
-`[zygisk.filter]` shares the injection rules' filter type and validation. Alternatively, use an external filter:
-
-```toml
-manifest_version = 2
-
-[zygisk.filter]
-type = "socket_file"
-path = "/path/to/filter.sock"
-```
-
-A `[zygisk.filter]` with `type = "static"` must specify at least one condition; an empty static filter is invalid. An empty `[zygisk]` or a missing filter type is invalid; omitting the section disables the module's Zygisk component. `library` and `source` are not accepted in the Zygisk section; its static filter also rejects init-only `path` and `name`. Zynx prepares the standard `zygisk/arm64-v8a.so` automatically for the supported arm64 target. Both `[zygisk]` and `[[inject]]` can appear in one manifest and decide independently. Without compiled Zygisk support or the runtime `zygisk` flag, Zygisk library preparation and arbitration are skipped while native injection rules continue to work. The old `zynx-configs.toml` entry point is no longer read.
+Zygisk uses the same filters as zygote injection rules. Zynx loads the standard `zygisk/arm64-v8a.so`; no library path is configured. The Zygisk component is enabled only when its section is present and the runtime feature is enabled.
 
 ### External Filters
 
-The same filter transports and protocol are used by `[zygisk.filter]` and `[inject.filter]`.
+Zygote rules and Zygisk can use `stdio`, `socket_file`, or `unix_abstract` instead of a static filter:
 
-Supported transports are `stdio` (`path`, optional `args`), `socket_file` (`path`), and `unix_abstract` (`prefix`, resolving the highest sequence in `<prefix>_<seq>_<suffix>`).
+```toml
+[inject.filter]
+type = "stdio"
+path = "/data/adb/modules/example/bin/filter"
+args = ["--profile", "example"]
+```
 
-Each connection handles one request and one response. Each frame has a 4-byte little-endian payload length followed by Protobuf bytes, with a 1 MiB limit. Connection, send, and receive operations each have a 1-second timeout. A stdio filter starts a child per check, which is terminated when the check finishes.
+For a file socket:
 
-The protocol is defined in [embryo_check_args.proto](src/core/proto/embryo_check_args.proto). Zynx sends a `CheckRequest` with `protocol_version = 2` and complete `ProcessInfo`, including the process name and app data directory when available. The filter must respond with `CheckResponse`, set `protocol_version = 2`, and explicitly set `allow` to either `true` or `false`. Missing decisions, unsupported versions, and I/O failures deny injection. The old fast/slow protocol is unsupported; existing filters must be updated.
+```toml
+[inject.filter]
+type = "socket_file"
+path = "/data/adb/example/filter.sock"
+```
 
+For an abstract socket, Zynx selects the highest sequence in `<prefix>_<seq>_<suffix>`:
+
+```toml
+[inject.filter]
+type = "unix_abstract"
+prefix = "example"
+```
+
+Each connection exchanges one request and one response. Stdio starts a child per check and terminates it afterward. Frames contain a 4-byte little-endian length followed by Protobuf data, limited to 1 MiB. Sending and receiving each have a 1-second timeout.
+
+The [protocol definition](src/core/proto/embryo_check_args.proto) specifies `CheckRequest` and `CheckResponse`. Requests contain `protocol_version = 2` and process information. Responses must use the same version and explicitly set `allow`. Protocol and communication errors reject the rule; another rule can still allow the same library.
+
+## LiteLoader
+
+Enable with runtime `--features liteloader`. Place libraries in `/data/adb/zynx/liteloader/`, named `<package_name>@<library_name>.so` or `<package_name>@<library_name>.dex`. LiteLoader loads them into matching app processes and watches the directory for changes.
+
+Dex entry points must be `xyz.mufanc.zynx.Main` with a `public static void main(String[])` method.
+
+## Debugger
+
+Enable with runtime `--features debugger`, then select an app with:
+
+```shell
+setprop debug.zynx.debuggable.com.example.app 1
+```
+
+Debugging is enabled when the app process next starts.
 
 ## License
 

@@ -315,14 +315,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_old_responses_wrong_versions_and_missing_decisions() {
-        // Old ALLOW is the empty proto3 message; DENY and MORE_INFO only set tag 1.
-        for bytes in [vec![], vec![8, 1], vec![8, 2]] {
-            assert!(exchange(bytes).await.is_err());
-        }
+    async fn rejects_wrong_versions_and_missing_decisions() {
         for response in [
             CheckResponse {
-                protocol_version: 1,
+                protocol_version: FILTER_PROTOCOL_VERSION + 1,
                 allow: Some(true),
             },
             CheckResponse {

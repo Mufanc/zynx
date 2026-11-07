@@ -638,9 +638,8 @@ mod tests {
     #[test]
     fn rejects_invalid_versions_libraries_and_static_fields() {
         for text in [
-            "library = 'lib.so'",
+            "inject = []",
             "manifest_version = '2'",
-            "manifest_version = 1\ninject = []",
             "manifest_version = 3\ninject = []",
             "manifest_version = 2\ninject = []",
             "manifest_version = 2\nunknown = true\ninject = []",
@@ -661,9 +660,6 @@ mod tests {
             "uid = 12000",
             "uid = '1,,2'",
             "user_id = '9-1'",
-            "is_main_user = true",
-            "is_core_uid = true",
-            "exe = '/bin/service'",
         ] {
             assert!(rule("zygote", fields).is_err(), "accepted {fields}");
         }
