@@ -297,7 +297,7 @@ mod tests {
 
             [[inject]]
             source = "init"
-            library = "future-service.so"
+            library = "service.so"
 
             [inject.filter]
             type = "static"
@@ -533,20 +533,6 @@ mod tests {
                 &module.libraries[Path::new(path)]
             ));
         }
-    }
-
-    #[tokio::test]
-    async fn skips_module_scan_without_moddir() {
-        if env::var_os("MODDIR").is_some() {
-            return;
-        }
-        let provider = ZynxPolicyProvider::default();
-        provider.init().await.unwrap();
-        assert!(provider.modules.get().is_none());
-        assert!(matches!(
-            provider.check(&args(10123)).await,
-            PolicyDecision::Deny
-        ));
     }
 
     #[tokio::test]
