@@ -11,7 +11,7 @@ LLVM_BIN := ONDK_PATH / "toolchains/llvm/prebuilt" / HOST_TAG / "bin"
 
 export CC := LLVM_BIN / ("aarch64-linux-android" + TARGET_SDK + "-clang")
 
-package-module variant="release": (build variant "" "false")
+package-module variant="release" features="": (build variant features "false")
     rm -rf target/module target/module-{{variant}}.zip
     cp -R module target/module
     cp target/aarch64-linux-android/{{variant}}/zynx target/module/bin
@@ -19,6 +19,7 @@ package-module variant="release": (build variant "" "false")
     cp target/aarch64-linux-android/{{variant}}/libzynx_bridge.so target/module/bin
     rm target/module/bin/.keep
     cd target/module && zip -r ../module-{{variant}}.zip .
+    unzip -t target/module-{{variant}}.zip
     rm -rf target/module
 
 build variant="debug" features="" default_features="true": setup-ondk

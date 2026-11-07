@@ -6,6 +6,8 @@ Zynx (**Zy**gote **N**e**x**us) is an Android code injection framework written i
 
 The default `standalone` build embeds the bridge and provides LiteLoader and Debugger. Module builds use `--no-default-features`, require `--bridge PATH`, and support daemon mode and module configuration. Add the Cargo feature `zygisk` for Zygisk compatibility.
 
+Build an installable module ZIP with `just package-module release`, or `just package-module release "zynx/zygisk"` for Zygisk compatibility. Both commands write `target/module-release.zip`.
+
 Standalone runs in the foreground. Attach to a running zygote with:
 
 ```shell
