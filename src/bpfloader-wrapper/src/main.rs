@@ -17,7 +17,7 @@ const ZYNX_TIMEOUT: Duration = Duration::from_secs(10);
 const SELINUX_XATTR: &CStr = c"security.selinux";
 
 fn copy_selinux_context(source: &CStr, target: &OwnedFd) -> io::Result<()> {
-    let size = fs::getxattr(source, SELINUX_XATTR, &mut [0_u8; 0])?;
+    let size = fs::getxattr_query(source, SELINUX_XATTR)?;
     let mut context = vec![0_u8; size];
     let size = fs::getxattr(source, SELINUX_XATTR, &mut context)?;
 
