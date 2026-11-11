@@ -16,7 +16,6 @@ use scopeguard::defer;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task;
-use zynx_misc::ext::ResultExt;
 
 pub const ZYGOTE_NAME: &str = "zygote64";
 
@@ -84,7 +83,9 @@ impl ZygoteTracer {
         info!("found zygote process: {pid}");
 
         defer! {
-            signal::kill(pid, Signal::SIGCONT).log_if_error()
+            if let Err(error) = signal::kill(pid, Signal::SIGCONT) {
+                error!("failed to resume zygote {pid}: {error}");
+            }
         }
 
         Monitor::instance().attach_zygote(pid.as_raw())?;
@@ -128,7 +129,9 @@ impl ZygoteTracer {
         signal::kill(pid, Signal::SIGSTOP)?;
 
         defer! {
-            signal::kill(pid, Signal::SIGCONT).log_if_error()
+            if let Err(error) = signal::kill(pid, Signal::SIGCONT) {
+                error!("failed to resume zygote {pid}: {error}");
+            }
         }
 
         Monitor::instance().attach_zygote(pid.as_raw())?;
@@ -186,7 +189,10 @@ impl ZygoteTracer {
                 .and_then(EmbryoInjector::start)
             {
                 error!("embryo {pid} injection failed: {error:#}; terminating process");
-                process::terminate(pid).log_if_error();
+
+                if let Err(error) = process::terminate(pid) {
+                    error!("failed to terminate embryo {pid}: {error:#}");
+                }
             }
 
             let elapsed = start.elapsed();

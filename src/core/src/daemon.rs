@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use daemonize::Daemonize;
-use log::info;
+use log::{error, info};
 use nix::errno::Errno;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -20,7 +20,6 @@ use tokio::signal::unix;
 use tokio::signal::unix::SignalKind;
 use tokio::sync::oneshot;
 use tokio::{task, time};
-use zynx_misc::ext::ResultExt;
 
 const ENV_LAUNCHER_PID: &str = "ZYNX_LAUNCHER_PID";
 const ENV_WAIT_BPFLOADER: &str = "ZYNX_WAIT_BPFLOADER";
@@ -138,7 +137,9 @@ pub fn wait_for_bpfloader_if_needed() -> Result<()> {
 /// Releases the wrapper, or the launcher when no wrapper is involved.
 pub fn notify_started() {
     if let Some(connection) = BPFLOADER_CONNECTION.lock().unwrap().take() {
-        socket::send(connection.as_raw_fd(), &[1], MsgFlags::MSG_NOSIGNAL).log_if_error();
+        if let Err(error) = socket::send(connection.as_raw_fd(), &[1], MsgFlags::MSG_NOSIGNAL) {
+            error!("failed to notify bpfloader wrapper that Zynx is ready: {error}");
+        }
     }
 
     notify_launcher_if_needed();
@@ -155,12 +156,15 @@ fn notify_launcher_if_needed() {
 
             let pid = Pid::from_raw(pid.parse()?);
 
-            signal::kill(pid, Signal::SIGUSR1)?;
+            signal::kill(pid, Signal::SIGUSR1)
+                .with_context(|| format!("failed to send SIGUSR1 to launcher {pid}"))?;
             info!("notifying launcher...");
 
             Ok(())
         })();
 
-        result.log_if_error();
+        if let Err(error) = result {
+            error!("failed to notify launcher: {error:#}");
+        }
     })
 }

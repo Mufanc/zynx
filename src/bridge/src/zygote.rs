@@ -1,14 +1,13 @@
 use crate::init_logger;
 use crate::injector::ActionExecutor;
 use anyhow::Result;
-use log::{debug, info};
+use log::{debug, error, info};
 use nix::libc::c_long;
 use std::cell::RefCell;
 use std::os::fd::{FromRawFd, OwnedFd};
 use std::slice;
 use zynx_bridge_api::action::Action;
 use zynx_bridge_shared::zygote::{BridgeArgs, IpcPayload, SpecializeArgs};
-use zynx_misc::ext::ResultExt;
 
 struct SpecializeContext {
     args: SpecializeArgs,
@@ -73,12 +72,16 @@ extern "C" fn specialize_pre(args: *mut c_long, args_count: usize, bridge_args: 
     init_logger();
     debug!("specialize args: {args:?}");
 
-    on_specialize_pre(args, bridge_args).log_if_error()
+    if let Err(error) = on_specialize_pre(args, bridge_args) {
+        error!("bridge specialize pre-hook failed: {error:#}");
+    }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn specialize_post() {
     debug!("post specialize");
 
-    on_specialize_post().log_if_error()
+    if let Err(error) = on_specialize_post() {
+        error!("bridge specialize post-hook failed: {error:#}");
+    }
 }

@@ -2099,7 +2099,6 @@ dependencies = [
  "wincode",
  "zynx-bridge-api",
  "zynx-bridge-shared",
- "zynx-misc",
  "zynx-zygisk-compat",
 ]
 

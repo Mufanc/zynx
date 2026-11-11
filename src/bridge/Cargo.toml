@@ -20,5 +20,4 @@ nix = { workspace = true, features = ["mman", "user"] }
 wincode = { workspace = true }
 zynx-bridge-api = { path = "../bridge-api" }
 zynx-bridge-shared = { path = "../bridge-shared" }
-zynx-misc = { path = "../misc" }
 zynx-zygisk-compat = { path = "../zygisk-compat", optional = true }

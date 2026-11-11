@@ -1,9 +1,9 @@
 use anyhow::{Context, Result};
+use log::error;
 use notify::{Config, Event, EventKindMask, INotifyWatcher, RecursiveMode, Watcher};
 use std::path::Path;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Receiver;
-use zynx_misc::ext::ResultExt;
 
 pub struct AsyncInotify {
     rx: Receiver<Result<Event>>,
@@ -15,8 +15,9 @@ impl AsyncInotify {
         let (tx, rx) = mpsc::channel(1);
         let mut watcher = INotifyWatcher::new(
             move |res: notify::Result<Event>| {
-                tx.blocking_send(res.map_err(|err| err.into()))
-                    .log_if_error();
+                if let Err(error) = tx.blocking_send(res.map_err(|err| err.into())) {
+                    error!("failed to forward filesystem event to watcher receiver: {error}");
+                }
             },
             Config::default().with_event_kinds(mask),
         )?;
