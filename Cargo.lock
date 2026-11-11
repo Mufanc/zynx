@@ -1363,6 +1363,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ptrace-kit"
+version = "0.1.0"
+source = "git+https://github.com/Mufanc/ptrace-kit?rev=8238420df495b7511a71ee381d08336e9c532503#8238420df495b7511a71ee381d08336e9c532503"
+dependencies = [
+ "jni-sys",
+ "nix",
+ "procfs",
+ "r3solvr",
+ "rustix",
+ "thiserror",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1380,7 +1393,7 @@ checksum = "69cdb34c158ceb288df11e18b4bd39de994f6657d83847bdffdbd7f346754b0f"
 [[package]]
 name = "r3solvr"
 version = "0.1.0"
-source = "git+https://github.com/Mufanc/r3solvr#5969d7678d12daa9ea7c5848e89bf99a50151356"
+source = "git+https://github.com/Mufanc/r3solvr?tag=v1.0.0#5969d7678d12daa9ea7c5848e89bf99a50151356"
 dependencies = [
  "lzma-rs",
  "object 0.39.1",
@@ -2039,7 +2052,6 @@ dependencies = [
  "env_logger",
  "futures",
  "glob",
- "jni",
  "log",
  "memfd",
  "nix",
@@ -2050,6 +2062,7 @@ dependencies = [
  "procfs",
  "prost",
  "prost-build",
+ "ptrace-kit",
  "r3solvr",
  "regex-lite",
  "rustix",

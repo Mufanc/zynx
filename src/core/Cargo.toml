@@ -20,15 +20,15 @@ daemonize = { workspace = true }
 dynasmrt = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
-jni = { workspace = true }
 log = { workspace = true }
 memfd = { workspace = true }
-nix = { workspace = true, features = ["feature", "fs", "process", "ptrace", "resource", "signal", "socket", "uio", "user"] }
+nix = { workspace = true, features = ["feature", "fs", "process", "resource", "signal", "socket", "user"] }
 notify = { workspace = true }
 once_cell = { workspace = true }
 once_map = { workspace = true }
 parking_lot = { workspace = true }
 procfs = { workspace = true }
+ptrace-kit = { workspace = true }
 prost = { workspace = true }
 r3solvr = { workspace = true }
 regex-lite = { workspace = true }

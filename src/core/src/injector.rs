@@ -20,7 +20,7 @@ mod asm;
 mod bridge;
 mod context;
 mod misc;
-mod ptrace;
+mod process;
 
 pub static PAGE_SIZE: Lazy<usize> =
     Lazy::new(|| unistd::sysconf(SysconfVar::PAGE_SIZE).unwrap().unwrap() as _);
@@ -33,7 +33,7 @@ fn handle_event(context: &Arc<ZynxContext>, event: &Message) -> Result<()> {
         }
         Message::NameMatches(pid, name) => {
             if name == ZYGOTE_NAME {
-                ptrace::spin_wait(*pid)?;
+                process::spin_wait(*pid)?;
 
                 let args = Process::new(pid.as_raw())?.cmdline()?;
 

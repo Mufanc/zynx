@@ -1,37 +1,36 @@
+use crate::binary::library::SystemLibraryResolver;
+use crate::dynasm;
 use crate::injector::app::policy::{Action, ProcessInfo};
 use crate::injector::app::zygote::ZygoteMaps;
 use crate::injector::app::{SC_BRK, ipc};
 use crate::injector::context::ZynxContext;
-use crate::injector::ptrace::ext::WaitStatusExt;
-use crate::injector::ptrace::ext::base::PtraceExt;
-use crate::injector::ptrace::ext::ipc::{MmapOptions, PtraceIpcExt};
-use crate::injector::ptrace::ext::jni::PtraceJniExt;
-use crate::injector::ptrace::ext::remote_call::{PtraceRemoteCallExt, RemoteLibraryResolver};
-use crate::injector::ptrace::{RegSet, RemoteProcess};
+use crate::injector::process;
 use crate::injector::{PAGE_SIZE, misc};
-use crate::{build_args, dynasm};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, bail};
 use dynasmrt::VecAssembler;
 use dynasmrt::aarch64::Aarch64Relocation;
 use log::{debug, info, trace, warn};
+use nix::errno::Errno;
 use nix::libc::{
-    MADV_DONTNEED, MAP_ANONYMOUS, MAP_PRIVATE, PROT_EXEC, PROT_READ, PROT_WRITE, RTLD_NOW, c_long,
+    MADV_DONTNEED, MAP_ANONYMOUS, MAP_FAILED, MAP_PRIVATE, PR_SET_VMA, PR_SET_VMA_ANON_NAME,
+    PROT_EXEC, PROT_READ, PROT_WRITE, RTLD_NOW, c_long,
 };
-use nix::sys::signal::Signal;
+use nix::sys::signal::{self, Signal};
 use nix::sys::wait::WaitStatus;
 use nix::unistd::{Gid, Pid, Uid};
 use once_cell::sync::Lazy;
-use scopeguard::ScopeGuard;
+use procfs::process::MMPermissions;
+use ptrace_kit::memory;
+use ptrace_kit::{RegSet, RemoteAddress, Tracee, TraceeWithTimeout};
+use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::ops::Deref;
-use std::os::fd::{AsFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd, IntoRawFd, RawFd};
 use std::sync::Arc;
-use std::{fmt, mem};
+use std::time::Duration;
 use syscalls::Sysno;
 use tokio::runtime::Handle;
 use zynx_bridge_shared::remote_lib::DlextInfo;
 use zynx_bridge_shared::zygote::{BridgeArgs, SpecializeArgs};
-use zynx_misc::ext::ResultExt;
 
 static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 
@@ -45,18 +44,12 @@ static TRAMPOLINE_SIZE: Lazy<usize> = Lazy::new(|| *PAGE_SIZE * 16);
 ///    and cleans itself up afterwards
 pub struct EmbryoInjector {
     context: Arc<ZynxContext>,
-    tracee: RemoteProcess,
+    tracee: TraceeWithTimeout,
     maps: ZygoteMaps,
     /// Address of the SpecializeCommon function in the remote process
-    specialize_fn: usize,
-}
-
-impl RemoteLibraryResolver for EmbryoInjector {
-    fn find_library_base(&self, library: &str) -> Result<usize> {
-        self.maps
-            .find_library_base_by_name(library)
-            .context(format!("failed to resolve library: {library}"))
-    }
+    specialize_fn: RemoteAddress,
+    /// Non-executable libc base used to trap remote function returns.
+    return_address: RemoteAddress,
 }
 
 impl EmbryoInjector {
@@ -64,119 +57,170 @@ impl EmbryoInjector {
         context: Arc<ZynxContext>,
         pid: Pid,
         maps: ZygoteMaps,
-        specialize_fn: usize,
-    ) -> Self {
-        Self {
+        specialize_fn: RemoteAddress,
+    ) -> anyhow::Result<Self> {
+        let return_address = maps
+            .find_library_base_by_name("libc")
+            .context("failed to find libc base for remote returns")?;
+        let vma = maps
+            .find_vma(return_address)
+            .context("libc base memory region not found")?;
+
+        if vma.perms.contains(MMPermissions::EXECUTE) {
+            bail!("libc base memory region is executable");
+        }
+
+        memory::process_mem_write_all(pid, specialize_fn, &SC_BRK)?;
+
+        let tracee = Tracee::seize(pid)?.with_timeout(Duration::from_secs(5));
+
+        Ok(Self {
             context,
-            tracee: RemoteProcess::new(pid),
+            tracee,
             maps,
             specialize_fn,
-        }
+            return_address,
+        })
     }
 
-    /// Main entry point: installs a breakpoint, waits for it to be hit,
-    /// then decides whether to inject into the embryo process.
-    pub fn start(&self) -> Result<()> {
-        // Install a software breakpoint at the specialize function entry
-        self.poke_data_ignore_perm(self.specialize_fn, &SC_BRK)?;
+    pub fn start(mut self) -> anyhow::Result<()> {
+        signal::kill(self.tracee.tid(), Signal::SIGCONT)?;
 
-        // Attach to the process via PTRACE_SEIZE and resume it
-        self.seize()?;
-        self.kill(Signal::SIGCONT)?;
-
-        let detach_defer = scopeguard::guard((), |_| {
-            self.detach(None).log_if_error();
-        });
-
-        // Event loop: wait for the breakpoint or process termination
         loop {
-            let status = self.wait()?;
+            let status = self.tracee.wait_blocking()?;
 
             trace!("{self} status = {status:?}");
 
             match status {
                 WaitStatus::Exited(_, code) => {
                     warn!("embryo exited with code: {code}");
-                    ScopeGuard::into_inner(detach_defer);
                     return Ok(());
                 }
                 WaitStatus::Signaled(_, sig, _) => {
                     warn!("embryo killed by {sig}");
-                    ScopeGuard::into_inner(detach_defer);
                     return Ok(());
                 }
-                // SIGTRAP means the breakpoint was hit (specialize function called)
                 WaitStatus::Stopped(_, Signal::SIGTRAP) => {
-                    // Capture registers and read the specialize function arguments
-                    let regs = self.get_regs()?;
-                    let mut raw_args = vec![0; self.context.specialize_abi.args_count];
+                    let regs = self.tracee.read_regs()?;
+                    let raw_args = self.read_args(&regs)?;
 
-                    self.get_args(&mut raw_args)?;
-                    // Restore the original code at the breakpoint site
                     self.restore_swbp()?;
 
-                    // Parse the raw args into a structured form
                     let args = SpecializeArgs::new(&raw_args, self.context.specialize_abi.ver);
 
                     debug!("{self} specialize args: {args:?}");
 
-                    // Query policy providers to determine if injection is needed
                     let handle = Handle::current();
-                    let inject_payload = handle.block_on(self.check_process(&args))?;
 
-                    if let Some(payload) = inject_payload {
-                        // Injection required: deploy trampoline and inject libraries
-                        self.do_inject(regs, &raw_args, payload)?;
+                    if let Some(actions) = handle.block_on(self.check_process(&args))? {
+                        self.do_inject(regs, &raw_args, actions)?;
                     } else {
-                        // No injection needed: just restore registers and let it continue
-                        self.set_regs(&regs)?;
+                        self.tracee.write_regs(&regs)?;
+                        self.tracee.detach(None)?;
                     }
 
-                    break;
+                    return Ok(());
                 }
-                _ => {}
+                WaitStatus::Stopped(_, sig) | WaitStatus::PtraceEvent(_, sig, _) => {
+                    self.tracee.resume(Some(sig))?;
+                }
+                _ => self.tracee.resume(None)?,
             }
-
-            // Forward any pending signals and continue the tracee
-            self.cont(status.sig())?;
         }
-
-        Ok(())
     }
 
-    fn restore_swbp(&self) -> Result<()> {
+    fn read_args(&self, regs: &RegSet) -> anyhow::Result<Vec<c_long>> {
+        (0..self.context.specialize_abi.args_count)
+            .map(|index| {
+                if index < 8 {
+                    Ok(regs.register(index)? as c_long)
+                } else {
+                    Ok(self.tracee.read_u64(regs.sp() + 8 * (index - 8))? as c_long)
+                }
+            })
+            .collect()
+    }
+
+    fn resolve_fn(&self, library: &str, symbol: &str) -> anyhow::Result<RemoteAddress> {
+        let base = self
+            .maps
+            .find_library_base_by_name(library)
+            .with_context(|| format!("failed to resolve library: {library}"))?;
+
+        Ok(base
+            + SystemLibraryResolver::instance()
+                .resolve(library, symbol)?
+                .addr)
+    }
+
+    fn call_remote(&mut self, library: &str, symbol: &str, args: &[u64]) -> anyhow::Result<u64> {
+        let function = self.resolve_fn(library, symbol)?;
+
+        // The target is stopped; the validated libc base faults on instruction fetch.
+        Ok(unsafe {
+            self.tracee.call_remote(
+                function,
+                args,
+                self.return_address,
+                Some(&mut process::remote_stop),
+            )
+        }?)
+    }
+
+    fn restore_swbp(&mut self) -> anyhow::Result<()> {
         debug!("{self} restore swbp: {}", self.specialize_fn);
 
-        // note: no writeback is required because MADV_DONTNEED immediately unmaps the memory,
-        // subsequent accesses to this region will trigger page faults and reload data from the file.
-        // self.poke_data_ignore_perm(swbp.addr(), swbp.backup())?;
-
-        #[rustfmt::skip]
-        let result = self.call_remote_auto(
-            ("libc", "madvise"),
-            build_args!(misc::floor_to_page_size(self.specialize_fn), *PAGE_SIZE, MADV_DONTNEED)
+        // MADV_DONTNEED reloads the original instructions from the file-backed mapping.
+        let result = self.call_remote(
+            "libc",
+            "madvise",
+            &[
+                misc::floor_to_page_size(self.specialize_fn) as u64,
+                *PAGE_SIZE as u64,
+                MADV_DONTNEED as u64,
+            ],
         )?;
 
-        if result == -1 {
+        if result as i64 == -1 {
             bail!("failed to restore swbp");
         }
 
         Ok(())
     }
 
-    async fn check_process(&self, args: &SpecializeArgs) -> Result<Option<Vec<Action>>> {
+    async fn check_process(
+        &mut self,
+        args: &SpecializeArgs,
+    ) -> anyhow::Result<Option<Vec<Action>>> {
         // Todo: selinux check execmem?
 
         let uid = Uid::from_raw(args.uid as _);
         let package_info = self.context.package_index.query(uid);
+        // JNIEnv and jstring references belong to this stopped specialize call.
+        let (nice_name, app_data_dir) = unsafe {
+            (
+                self.tracee.read_jstring(
+                    args.env as RemoteAddress,
+                    args.managed_nice_name as RemoteAddress,
+                    self.return_address,
+                    Some(&mut process::remote_stop),
+                )?,
+                self.tracee.read_jstring(
+                    args.env as RemoteAddress,
+                    args.managed_app_data_dir as RemoteAddress,
+                    self.return_address,
+                    Some(&mut process::remote_stop),
+                )?,
+            )
+        };
         let process = ProcessInfo {
             uid,
             gid: Gid::from_raw(args.gid as _),
             is_system_server: args.is_system_server,
             is_child_zygote: args.is_child_zygote,
             package_info,
-            nice_name: self.read_jstring(args.env, args.managed_nice_name)?,
-            app_data_dir: self.read_jstring(args.env, args.managed_app_data_dir)?,
+            nice_name,
+            app_data_dir,
         };
         let manager = &self.context.policy;
         let actions = manager.check(&process).await;
@@ -196,44 +240,86 @@ impl EmbryoInjector {
     /// 7. Restore args and tail-call the original SpecializeCommon
     /// 8. On return (via trampoline): call the post-hook
     /// 9. Clean up by munmap-ing the trampoline and returning to the real caller
-    fn do_inject(&self, mut regs: RegSet, raw_args: &[c_long], actions: Vec<Action>) -> Result<()> {
+    fn do_inject(
+        &mut self,
+        mut regs: RegSet,
+        raw_args: &[c_long],
+        actions: Vec<Action>,
+    ) -> anyhow::Result<()> {
         info!("injecting process: {self}, raw_args = {raw_args:?}");
 
-        // Allocate RWX memory in the remote process for the trampoline code
-        let trampoline_addr = self.mmap_ex(
-            MmapOptions::new(
-                *TRAMPOLINE_SIZE,
-                PROT_READ | PROT_WRITE | PROT_EXEC,
-                MAP_PRIVATE | MAP_ANONYMOUS,
-            )
-            .name("zynx::trampoline"),
+        let trampoline_addr = self.call_remote(
+            "libc",
+            "mmap",
+            &[
+                0,
+                *TRAMPOLINE_SIZE as u64,
+                (PROT_READ | PROT_WRITE | PROT_EXEC) as u64,
+                (MAP_PRIVATE | MAP_ANONYMOUS) as u64,
+                u64::MAX,
+                0,
+            ],
+        )? as RemoteAddress;
+
+        if trampoline_addr == MAP_FAILED as RemoteAddress {
+            let errno_ptr = self.call_remote("libc", "__errno", &[])? as RemoteAddress;
+            let errno = Errno::from_raw(self.tracee.read_u64(errno_ptr)? as i32);
+
+            bail!("failed to allocate trampoline: {errno}");
+        }
+
+        self.tracee
+            .write_all(trampoline_addr, c"zynx::trampoline".to_bytes_with_nul())?;
+        self.call_remote(
+            "libc",
+            "prctl",
+            &[
+                PR_SET_VMA as u64,
+                PR_SET_VMA_ANON_NAME as u64,
+                trampoline_addr as u64,
+                *TRAMPOLINE_SIZE as u64,
+                trampoline_addr as u64,
+            ],
         )?;
 
-        let unmap_on_fail = scopeguard::guard_on_success((), |_| {
-            self.munmap(trampoline_addr, *TRAMPOLINE_SIZE)
-                .log_if_error();
-        });
+        // The target is stopped at specialize; libc and its stack remain available for IPC setup.
+        let mut channel = unsafe {
+            self.tracee
+                .create_channel(self.return_address, Some(&mut process::remote_stop))
+        }?;
+        let bridge_fd = unsafe {
+            self.tracee.install_fd(
+                &mut channel,
+                self.context.bridge.as_fd(),
+                self.return_address,
+                Some(&mut process::remote_stop),
+            )
+        }?;
+        let (local_fd, remote_fd) = channel.into_parts().map_err(|(_, error)| error)?;
+        let bytecode = self.assemble_trampoline(
+            trampoline_addr,
+            bridge_fd.as_raw_fd(),
+            remote_fd.as_raw_fd(),
+        )?;
 
-        // Establish a unix socket connection with the remote process for IPC
-        let conn = self.connect(trampoline_addr)?;
+        self.tracee.write_all(trampoline_addr, &bytecode)?;
+        regs.set_pc(trampoline_addr);
+        self.tracee.write_regs(&regs)?;
+        self.tracee.detach(None)?;
 
-        // Install the bridge library fd into the remote process
-        let bridge_fd = self.install_fd(trampoline_addr, &conn, self.context.bridge.as_fd())?;
+        // The trampoline and bridge own the remote descriptors after detach.
+        let _ = bridge_fd.into_raw_fd();
+        let _ = remote_fd.into_raw_fd();
 
-        debug!("{self} bridge fd: {bridge_fd:?}");
+        ipc::transfer_data(local_fd, actions)
+    }
 
-        let bridge_fd = bridge_fd.forget();
-
-        // If there are actions to inject, keep the socket open for sending
-        // payload later; otherwise close it immediately
-        let (conn_fd_local, conn_fd_remote) = if !actions.is_empty() {
-            let (local, remote) = conn.forget();
-            (Some(local), Some(remote))
-        } else {
-            conn.close(self)?;
-            (None, None)
-        };
-
+    fn assemble_trampoline(
+        &self,
+        trampoline_addr: RemoteAddress,
+        bridge_fd: RawFd,
+        remote_fd: RawFd,
+    ) -> anyhow::Result<Vec<u8>> {
         // Assemble the AArch64 trampoline code using dynasm
         let mut ops: VecAssembler<Aarch64Relocation> = VecAssembler::new(0);
 
@@ -242,7 +328,7 @@ impl EmbryoInjector {
 
         // Arguments passed to the bridge's pre-hook function
         let bridge_args = BridgeArgs {
-            conn_fd: conn_fd_remote.unwrap_or(-1),
+            conn_fd: remote_fd,
             specialize_version: self.context.specialize_abi.ver,
         };
 
@@ -337,7 +423,7 @@ impl EmbryoInjector {
             // Address of the original SpecializeCommon function
             ; .align 8
             ; specialize:
-            ;; ops.push_u64(self.specialize_fn as _)
+            ;; ops.push_u64(self.specialize_fn as u64)
 
             // Slot to save/restore the original return address
             ; .align 8
@@ -347,11 +433,11 @@ impl EmbryoInjector {
             // Resolved addresses of dlopen and dlsym
             ; .align 8
             ; dlopen:
-            ;; ops.push_u64(self.resolve_fn(("libdl", "android_dlopen_ext"))? as _)
+            ;; ops.push_u64(self.resolve_fn("libdl", "android_dlopen_ext")? as u64)
 
             ; .align 8
             ; dlsym:
-            ;; ops.push_u64(self.resolve_fn(("libdl", "dlsym"))? as _)
+            ;; ops.push_u64(self.resolve_fn("libdl", "dlsym")? as u64)
 
             // Bridge library name (used by android_dlopen_ext)
             ; .align 8
@@ -361,12 +447,12 @@ impl EmbryoInjector {
             // DlextInfo struct (tells dlopen to load from fd)
             ; .align align_of::<DlextInfo>()
             ; lib_info:
-            ;; ops.extend(crate::misc::as_byte_slice(&info))
+            ;; ops.extend(crate::misc::as_bytes(&info))
 
             // BridgeArgs struct passed to the pre-hook
             ; .align align_of::<BridgeArgs>()
             ; bridge_args:
-            ;; ops.extend(crate::misc::as_byte_slice(&bridge_args))
+            ;; ops.extend(crate::misc::as_bytes(&bridge_args))
 
             // Hook symbol name strings
             ; .align 8
@@ -385,12 +471,12 @@ impl EmbryoInjector {
             // Resolved address of munmap (for self-cleanup)
             ; .align 8
             ; munmap:
-            ;; ops.push_u64(self.resolve_fn(("libc", "munmap"))? as _)
+            ;; ops.push_u64(self.resolve_fn("libc", "munmap")? as u64)
 
             // Base address of this trampoline (passed to munmap)
             ; .align 8
             ; trampoline_addr:
-            ;; ops.push_u64(trampoline_addr as _)
+            ;; ops.push_u64(trampoline_addr as u64)
         );
 
         // Finalize the assembled bytecode and write it into the trampoline region
@@ -398,35 +484,12 @@ impl EmbryoInjector {
 
         trace!("dynasm bytecode: {bytecode:?}");
 
-        self.poke_data(trampoline_addr, &bytecode)?;
-
-        mem::forget(unmap_on_fail);
-
-        // Redirect execution to the trampoline and release the process
-        regs.set_pc(trampoline_addr);
-
-        self.set_regs(&regs)?;
-        self.detach(None)?;
-
-        // Send payload over the socket so the bridge can load libraries
-        if let Some(conn_fd) = conn_fd_local {
-            ipc::transfer_data(conn_fd, actions)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl Deref for EmbryoInjector {
-    type Target = RemoteProcess;
-
-    fn deref(&self) -> &Self::Target {
-        &self.tracee
+        Ok(bytecode)
     }
 }
 
 impl Display for EmbryoInjector {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.tracee, fmt)
+        write!(fmt, "Remote({})", self.tracee.tid())
     }
 }

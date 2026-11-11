@@ -1,8 +1,9 @@
 use crate::injector::app::embryo::EmbryoInjector;
 use crate::injector::context::ZynxContext;
+use crate::injector::process;
 use crate::monitor::Monitor;
 use anyhow::{Context, Result, bail};
-use log::{debug, info};
+use log::{debug, error, info};
 use nix::fcntl;
 use nix::sys::signal;
 use nix::sys::signal::Signal;
@@ -10,6 +11,7 @@ use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use procfs::process::{MMPermissions, MMapPath, MemoryMap, MemoryMaps, Process};
+use ptrace_kit::RemoteAddress;
 use scopeguard::defer;
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,7 +30,7 @@ impl ZygoteMaps {
         Ok(Self(Arc::new(Process::new(pid.as_raw())?.maps()?)))
     }
 
-    pub fn find_vma(&self, addr: usize) -> Option<&MemoryMap> {
+    pub fn find_vma(&self, addr: RemoteAddress) -> Option<&MemoryMap> {
         let addr = addr as u64;
 
         self.0
@@ -36,7 +38,7 @@ impl ZygoteMaps {
             .find(|vma| vma.address.0 <= addr && vma.address.1 > addr)
     }
 
-    pub fn find_library_base(&self, path: &str) -> Option<usize> {
+    pub fn find_library_base(&self, path: &str) -> Option<RemoteAddress> {
         let realpath = fcntl::readlink(path);
         let realpath = realpath
             .as_ref()
@@ -47,21 +49,21 @@ impl ZygoteMaps {
             if let MMapPath::Path(path) = &vma.pathname
                 && path.to_string_lossy() == realpath
             {
-                Some(vma.address.0 as _)
+                Some(vma.address.0 as RemoteAddress)
             } else {
                 None
             }
         })
     }
 
-    pub fn find_library_base_by_name(&self, name: &str) -> Option<usize> {
+    pub fn find_library_base_by_name(&self, name: &str) -> Option<RemoteAddress> {
         let suffix = format!("/{name}.so");
 
         self.0.iter().find_map(|vma| {
             if let MMapPath::Path(path) = &vma.pathname
                 && path.to_string_lossy().ends_with(&suffix)
             {
-                Some(vma.address.0 as _)
+                Some(vma.address.0 as RemoteAddress)
             } else {
                 None
             }
@@ -74,7 +76,7 @@ impl ZygoteMaps {
 pub struct ZygoteTracer {
     context: Arc<ZynxContext>,
     maps: ZygoteMaps,
-    specialize_fn: usize,
+    specialize_fn: RemoteAddress,
 }
 
 impl ZygoteTracer {
@@ -180,9 +182,12 @@ impl ZygoteTracer {
         task::spawn_blocking(move || {
             let start = Instant::now();
 
-            EmbryoInjector::new(context, pid, maps, specialize_fn)
-                .start()
-                .log_if_error();
+            if let Err(error) = EmbryoInjector::new(context, pid, maps, specialize_fn)
+                .and_then(EmbryoInjector::start)
+            {
+                error!("embryo {pid} injection failed: {error:#}; terminating process");
+                process::terminate(pid).log_if_error();
+            }
 
             let elapsed = start.elapsed();
 
