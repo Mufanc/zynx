@@ -1,6 +1,3 @@
-[alias]
-xtask = "run --package xtask --"
-
 [env]
 ROOT_DIR = { value = ".", relative = true }
 PROFILE = "debug"  # build debug by default
